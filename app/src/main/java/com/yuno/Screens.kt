@@ -91,8 +91,8 @@ import kotlinx.coroutines.launch
 import com.yuno.icons.SfIcons
 
 // ── Home / Subscriptions / Library ─────────────────────────────────────────────
-// Signed in, these show the account's real feeds. Signed out, they explain what signing
-// in brings rather than showing sample content.
+// Signed in, these show the account's feeds. Signed out, Home still shows recommendations;
+// Subscriptions and Library explain what signing in brings.
 
 @Composable
 fun HomeScreen(

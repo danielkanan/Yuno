@@ -215,7 +215,9 @@ class FeedState(
  */
 @Stable
 class LibraryData(scope: CoroutineScope, context: Context) {
-    val home = FeedState(scope, prefetchTop = 2, freshOnRefresh = true) { InnerTube.home(it) }
+    val home = FeedState(scope, prefetchTop = 2, freshOnRefresh = true) { next ->
+        if (Account.signedIn) InnerTube.home(next) else InnerTube.guestHome(next)
+    }
     val subscriptions = FeedState(scope, prefetchTop = 2) { InnerTube.subscriptionsFeed(it) }
     val history = FeedState(scope) { InnerTube.history(it) }
     private val prefs = context.getSharedPreferences(CHANNELS_PREFS, Context.MODE_PRIVATE)

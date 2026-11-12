@@ -186,7 +186,7 @@ object Account {
         runCatching {
             val request = Request.Builder().url("https://www.youtube.com/?hl=en")
                 .header("User-Agent", Net.USER_AGENT)
-                .header("Cookie", cookieHeader())
+                .apply { val cookie = cookieHeader(); if (cookie.isNotEmpty()) header("Cookie", cookie) }
                 .build()
             Net.client.newCall(request).execute().use { r ->
                 absorbSetCookies(r.headers("Set-Cookie"))
@@ -197,6 +197,15 @@ object Account {
             store?.put(KEY_CLIENT_VERSION, clientVersion)
             store?.put(KEY_VISITOR, visitorData)
         }
+    }
+
+    /**
+     * Guest Home needs a stable visitor id so YouTube can keep recommending. Fetches one from
+     * youtube.com when signed out and none is stored yet (signed-in sign-in already does this).
+     */
+    fun ensureVisitor() {
+        if (visitorData != null) return
+        refreshClientConfig()
     }
 
     internal fun clientVersion() = clientVersion
@@ -323,6 +332,25 @@ object InnerTube {
         val page = parseFeed(root)
         if (next == null) page.copy(chips = parseHomeChips(root)) else page
     }
+
+    /**
+     * Guest Home. Anonymous `FEwhat_to_watch` is an empty "history is off" wall, and Trending
+     * is consent-blocked the same way — anonymous search still returns real videos.
+     */
+    suspend fun guestHome(next: String? = null): FeedPage = withContext(Dispatchers.IO) {
+        if (!Account.signedIn) Account.ensureVisitor()
+        val body = if (next != null) JSONObject().put("continuation", next)
+        else JSONObject().put("query", GUEST_HOME_QUERY)
+        val page = parseFeed(postAny("search", body))
+        if (page.videos.isNotEmpty() || next != null) return@withContext page
+        // NewPipe search as a last resort (same path as the Search tab).
+        val videos = YouTube.search(GUEST_HOME_QUERY)
+        if (videos.isEmpty()) throw IOException("Couldn't load recommendations.")
+        FeedPage(videos, null)
+    }
+
+    /** Broad query so guest Home looks like a normal feed of popular videos. */
+    private const val GUEST_HOME_QUERY = "popular videos"
 
     /**
      * A channel's uploads (Videos tab), members-only ones filtered out like everywhere else. The

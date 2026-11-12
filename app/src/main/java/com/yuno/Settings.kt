@@ -206,7 +206,6 @@ fun SettingsScreen(
                         }
                     }
                 }
-                PageTopFade()
                 CompositionLocalProvider(
                     LocalTopChrome provides null,
                     LocalAppBackdrop provides backdrop,
