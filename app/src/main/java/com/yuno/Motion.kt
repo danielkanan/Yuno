@@ -11,6 +11,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -18,6 +19,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 
 /**
  * The single motion vocabulary (shared with Castii). Tuning dials:
@@ -70,6 +73,12 @@ fun Modifier.pressable(
     pressedScale: Float = 0.94f,
     /** A hold lifts this row into the blurred menu. */
     lift: Boolean = false,
+    /**
+     * Side padding drawn inside a lifted row, between its edge and its content.
+     * Left out of the picture, as BitChord's [liftPadding]: the thumbnail sits
+     * on the plate, not a gutter in from the left.
+     */
+    liftPadding: PaddingValues = PaddingValues(),
     onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ): Modifier = composed {
@@ -78,12 +87,17 @@ fun Modifier.pressable(
     val pressed by interaction.collectIsPressedAsState()
     val reduced = rememberReducedMotion()
     val capture = rememberHoldCapture()
+    val density = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
+    // A lifted row is not press-scaled. The scale springs back through the
+    // centre and the thumbnail on a wide row slides sideways and returns;
+    // BitChord's hold leaves the row where it is and lifts a copy of that.
     val scale by animateFloatAsState(
-        targetValue = if (pressed && !reduced) pressedScale else 1f,
+        targetValue = if (!lift && pressed && !reduced) pressedScale else 1f,
         animationSpec = spring(dampingRatio = 0.6f, stiffness = 1400f),
         label = "pressScale",
     )
-    val layer = this.graphicsLayer { scaleX = scale; scaleY = scale }
+    val layer = if (lift) this else this.graphicsLayer { scaleX = scale; scaleY = scale }
     // Disabled: no click handling at all, so taps fall through to what's underneath
     // (a disabled combinedClickable still swallows them — e.g. hidden video controls
     // blocking the tap that should bring them back).
@@ -97,7 +111,13 @@ fun Modifier.pressable(
             onLongClick = onLongClick?.let { long ->
                 {
                     view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                    if (lift) capture.onHold()
+                    if (lift) {
+                        with(density) {
+                            capture.trimLeft = liftPadding.calculateLeftPadding(layoutDirection).toPx()
+                            capture.trimRight = liftPadding.calculateRightPadding(layoutDirection).toPx()
+                        }
+                        capture.onHold()
+                    }
                     long()
                 }
             },

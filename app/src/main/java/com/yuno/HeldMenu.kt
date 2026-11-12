@@ -116,9 +116,19 @@ internal class HoldCapture {
     var requests by mutableIntStateOf(0)
     var handled = 0
 
+    /** Side padding to leave out of the picture, in pixels. BitChord's liftPadding. */
+    var trimLeft = 0f
+    var trimRight = 0f
+
     fun onHold() {
         val coordinates = coordinates?.takeIf { it.isAttached } ?: return
-        val item = HeldItem(Rect(coordinates.positionInWindow(), coordinates.size.toSize()))
+        // Not clipped to what shows: a card half off the screen is lifted whole.
+        // The side gutter is not part of the picture, so the thumbnail sits on
+        // the plate instead of a gutter in from the left.
+        val whole = Rect(coordinates.positionInWindow(), coordinates.size.toSize())
+        val item = HeldItem(
+            Rect(whole.left + trimLeft, whole.top, whole.right - trimRight, whole.bottom),
+        )
         LongPressOrigin.record(item)
         pending = item
         requests++
@@ -132,21 +142,27 @@ internal class HoldCapture {
         val item = pending ?: return
         pending = null
         val layer = graphics.createGraphicsLayer()
-        val width = scope.size.width.roundToInt().coerceAtLeast(1)
+        val trimLeft = trimLeft
+        val width = (scope.size.width - trimLeft - trimRight).roundToInt().coerceAtLeast(1)
         val height = scope.size.height.roundToInt().coerceAtLeast(1)
+        // BitChord's longPressMenuClickable record: the gutter is shifted out of
+        // the layer. drawContent paints with its own canvas, so that canvas is
+        // the layer's for this pass — otherwise the picture comes back empty.
         layer.record(
             size = IntSize(width, height),
             density = scope,
             layoutDirection = scope.layoutDirection,
         ) {
-            // drawContent paints with the scope's own canvas. Point that at the
-            // layer's canvas for this pass, or the picture comes back empty.
             val context = scope.drawContext
             val previous = context.canvas
-            context.canvas = drawContext.canvas
+            val canvas = drawContext.canvas
+            context.canvas = canvas
+            canvas.save()
+            canvas.translate(-trimLeft, 0f)
             try {
                 scope.drawContent()
             } finally {
+                canvas.restore()
                 context.canvas = previous
             }
         }

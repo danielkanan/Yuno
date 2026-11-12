@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -304,7 +305,13 @@ fun VideoCard(video: VideoItem, onClick: () -> Unit, modifier: Modifier = Modifi
             .fillMaxWidth()
             .padding(bottom = 16.dp)
             .prefetchOnPress(video.id)
-            .pressable(pressedScale = 0.97f, lift = true, onLongClick = { menu(video) }, onClick = onClick),
+            .pressable(
+                pressedScale = 0.97f,
+                lift = true,
+                liftPadding = PaddingValues(horizontal = PageGutter),
+                onLongClick = { menu(video) },
+                onClick = onClick,
+            ),
     ) {
         Box(
             Modifier
