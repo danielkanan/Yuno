@@ -44,9 +44,6 @@
     <string name="settings_crash_none">No hay ningún error guardado. Comparte cómo cerró Android Yuno la última vez, para un issue de GitHub</string>
     <string name="settings_crash_tile">Informe de errores guardado</string>
     <string name="settings_crash_share">Compartir informe de errores</string>
-    <string name="settings_made_by">Hecho por %1$s</string>
-    <string name="settings_say_hi">Pasa a saludar</string>
-    <string name="settings_email_developer">Escribir al desarrollador</string>
     <string name="settings_no_app">Ninguna app de este teléfono puede abrirlo</string>
 <string name="settings_zoom_fill_title">Ampliar para llenar en pantalla completa</string>
     <string name="settings_zoom_fill_on">Todos los vídeos llenan la pantalla; se recortan los bordes que sobran. Pellizca hacia dentro para ver un vídeo entero.</string>

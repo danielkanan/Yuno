@@ -43,9 +43,6 @@
     <string name="settings_crash_none">Kayıtlı çökme yok. Android\'in Yuno\'yi son kez nasıl kapattığını paylaşır, bir GitHub issue\'su için</string>
     <string name="settings_crash_tile">Çökme raporu kaydedildi</string>
     <string name="settings_crash_share">Çökme raporunu paylaş</string>
-    <string name="settings_made_by">%1$s tarafından yapıldı</string>
-    <string name="settings_say_hi">Gel bir merhaba de</string>
-    <string name="settings_email_developer">Geliştiriciye e-posta gönder</string>
     <string name="settings_no_app">Bu telefondaki hiçbir uygulama bunu açamıyor</string>
 <string name="settings_zoom_fill_title">Tam ekranda doldurmak için yakınlaştır</string>
     <string name="settings_zoom_fill_on">Her video ekranı doldurur; taşan kenarlar kırpılır. Bir videonun tamamını görmek için parmaklarınızı birleştirin.</string>

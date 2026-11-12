@@ -57,10 +57,6 @@
     <string name="settings_crash_none">No crash saved. Shares how Android last closed Yuno, for a GitHub issue</string>
     <string name="settings_crash_tile">Crash report saved</string>
     <string name="settings_crash_share">Share crash report</string>
-    <!-- The developer card, last on the Settings page; %1$s = the handle (@y7esdii). -->
-    <string name="settings_made_by">Made by %1$s</string>
-    <string name="settings_say_hi">Come say hi</string>
-    <string name="settings_email_developer">Email the developer</string>
     <string name="settings_no_app">No app on this phone can open that</string>
 <string name="settings_zoom_fill_title">Zoom to fill in fullscreen</string>
     <string name="settings_zoom_fill_on">Every video fills the screen; the edges past it are cropped. Pinch in to see a video whole.</string>

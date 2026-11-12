@@ -42,9 +42,6 @@
     <string name="settings_crash_none">Tidak ada error tersimpan. Membagikan cara Android terakhir menutup Yuno, untuk issue GitHub</string>
     <string name="settings_crash_tile">Laporan error tersimpan</string>
     <string name="settings_crash_share">Bagikan laporan error</string>
-    <string name="settings_made_by">Dibuat oleh %1$s</string>
-    <string name="settings_say_hi">Mampir dan sapa</string>
-    <string name="settings_email_developer">Kirim email ke developer</string>
     <string name="settings_no_app">Tidak ada aplikasi di ponsel ini yang bisa membukanya</string>
 <string name="settings_zoom_fill_title">Perbesar untuk mengisi di layar penuh</string>
     <string name="settings_zoom_fill_on">Setiap video mengisi layar; tepi yang berlebih dipotong. Cubit ke dalam untuk melihat video secara utuh.</string>

@@ -45,9 +45,6 @@
     <string name="settings_crash_none">Сбоев не сохранено. Отправляет, как Android в последний раз закрыл Yuno, для issue на GitHub</string>
     <string name="settings_crash_tile">Сохранён отчёт о сбое</string>
     <string name="settings_crash_share">Поделиться отчётом о сбое</string>
-    <string name="settings_made_by">Автор: %1$s</string>
-    <string name="settings_say_hi">Заходите поздороваться</string>
-    <string name="settings_email_developer">Написать разработчику</string>
     <string name="settings_no_app">На этом телефоне нет приложения, чтобы это открыть</string>
 <string name="settings_zoom_fill_title">Растягивать на весь экран</string>
     <string name="settings_zoom_fill_on">Каждое видео заполняет экран, лишние края обрезаются. Сведите пальцы, чтобы увидеть видео целиком.</string>

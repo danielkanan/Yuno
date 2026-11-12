@@ -42,9 +42,6 @@
     <string name="settings_crash_none">Chưa lưu sự cố nào. Chia sẻ cách Android đóng Yuno lần gần nhất, để gửi issue trên GitHub</string>
     <string name="settings_crash_tile">Đã lưu báo cáo sự cố</string>
     <string name="settings_crash_share">Chia sẻ báo cáo sự cố</string>
-    <string name="settings_made_by">Tạo bởi %1$s</string>
-    <string name="settings_say_hi">Ghé qua chào nhé</string>
-    <string name="settings_email_developer">Gửi email cho nhà phát triển</string>
     <string name="settings_no_app">Không có ứng dụng nào trên điện thoại này mở được</string>
 <string name="settings_zoom_fill_title">Thu phóng để lấp đầy khi toàn màn hình</string>
     <string name="settings_zoom_fill_on">Mọi video lấp đầy màn hình; phần mép thừa bị cắt. Chụm hai ngón tay để xem trọn video.</string>
