@@ -10,6 +10,15 @@ changes something people see or feel (faster, fewer errors); then say that.
 
 ## Unreleased
 
+## 1.0.0
+
+### New
+- Home, Subscriptions, Shorts, Search, and Library.
+- Browse recommendations without an account, or sign in for your own feed.
+- Liquid glass tab bar and mini player.
+- On-video controls, captions, SponsorBlock, and picture-in-picture.
+- Hold a video to play it next, add it to the queue, save it, or share it.
+
 ## 0.5.109
 
 ### New
