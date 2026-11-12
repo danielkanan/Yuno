@@ -14,12 +14,10 @@ changes something people see or feel (faster, fewer errors); then say that.
 
 ![Yuno](https://github.com/danielkanan/Yuno/raw/main/docs/banner.png)
 
-### New
-- Home, Subscriptions, Shorts, Search, and Library.
-- Browse recommendations without an account, or sign in for your own feed.
-- Liquid glass tab bar and mini player.
-- On-video controls, captions, SponsorBlock, and picture-in-picture.
-- Hold a video to play it next, add it to the queue, save it, or share it.
+### First release of Yuno
+- Home, Subscriptions, Shorts, Search, and Library
+- Recommendations when you're signed out, your own feed when you sign in
+- Liquid glass, a mini player, captions, and SponsorBlock
 
 ## 0.5.109
 
