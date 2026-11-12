@@ -2,15 +2,7 @@ package com.yuno
 
 import android.content.Intent
 import android.net.Uri
-import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -25,10 +17,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -65,22 +56,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.yuno.backdrop.backdrops.layerBackdrop
-import com.yuno.backdrop.backdrops.rememberLayerBackdrop
 import com.yuno.icons.SfIcons
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -123,91 +107,41 @@ private val SettingsTypography = Typography(
 @Composable
 fun SettingsScreen(
     player: PlayerState,
-    active: Boolean,
-    onClose: () -> Unit,
+    section: SettingsPage?,
+    query: String,
+    onQuery: (String) -> Unit,
+    onOpenSection: (SettingsPage) -> Unit,
     onSignIn: () -> Unit,
     onSignedOut: () -> Unit,
-    @Suppress("UNUSED_PARAMETER") wide: Boolean = false,
+    contentPadding: PaddingValues,
 ) {
     val c = MaterialTheme.colorScheme
-    val reduced = rememberReducedMotion()
-    var page by rememberSaveable { mutableStateOf<SettingsPage?>(null) }
-    var query by rememberSaveable { mutableStateOf("") }
-    val mainScroll = rememberSaveable(saver = ScrollState.Saver) { ScrollState(0) }
-    val focusManager = LocalFocusManager.current
+    val scroll = rememberSaveable(saver = ScrollState.Saver) { ScrollState(0) }
     var firstSearch by remember { mutableStateOf(true) }
     LaunchedEffect(query) {
-        if (firstSearch) firstSearch = false else mainScroll.scrollTo(0)
+        if (section != null) return@LaunchedEffect
+        if (firstSearch) firstSearch = false else scroll.scrollTo(0)
     }
-
-    val back = {
-        when {
-            page != null -> page = null
-            query.isNotEmpty() -> query = ""
-            else -> {
-                focusManager.clearFocus(force = true)
-                onClose()
-            }
-        }
-    }
-    BackHandler(enabled = active, onBack = back)
+    val ime = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
 
     MaterialTheme(colorScheme = c, typography = SettingsTypography, shapes = MaterialTheme.shapes) {
         CompositionLocalProvider(LocalTextStyle provides MaterialTheme.typography.bodyLarge.merge(OwnDirectionText)) {
-            Box(Modifier.fillMaxSize().background(c.background).overlayTouchBlock()) {
-                val glass = LocalLiquidGlassEnabled.current && isGlassSupported()
-                val haze = remember { HazeState() }
-                val pageColor = c.background
-                val paintBackdrop = remember(pageColor) {
-                    val block: ContentDrawScope.() -> Unit = {
-                        drawRect(pageColor)
-                        drawContent()
-                    }
-                    block
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .background(c.background)
+                    .overlayTouchBlock()
+                    .verticalScroll(scroll)
+                    .padding(contentPadding)
+                    .padding(top = topBarHeight() + TopBarContentGap, bottom = ime + 24.dp),
+            ) {
+                SettingsPageTitle(stringResource(section?.titleRes ?: R.string.settings_title))
+                if (section == null) {
+                    MainPage(player, query, onQuery, onOpenSection)
+                } else {
+                    PageBody(section, player, onSignIn, onSignedOut)
                 }
-                val backdrop = rememberLayerBackdrop(onDraw = paintBackdrop)
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .hazeSource(haze)
-                        .then(if (glass) Modifier.layerBackdrop(backdrop) else Modifier),
-                ) {
-                    AnimatedContent(
-                        targetState = page,
-                        modifier = Modifier.fillMaxSize(),
-                        transitionSpec = {
-                            val dir = if (targetState != null) 1 else -1
-                            if (reduced) fadeIn(tween(1)) togetherWith fadeOut(tween(1))
-                            else (slideInHorizontally(tween(280)) { dir * it / 8 } + fadeIn(tween(220))) togetherWith
-                                (slideOutHorizontally(tween(200)) { -dir * it / 10 } + fadeOut(tween(160)))
-                        },
-                        label = "settingsPage",
-                    ) { shown ->
-                        val scroll = if (shown == null) mainScroll else remember(shown) { ScrollState(0) }
-                        val bottom = WindowInsets.navigationBars.union(WindowInsets.ime).asPaddingValues().calculateBottomPadding()
-                        Column(
-                            Modifier
-                                .fillMaxSize()
-                                .verticalScroll(scroll)
-                                .padding(top = topBarHeight() + TopBarContentGap, bottom = bottom + 24.dp),
-                        ) {
-                            SettingsPageTitle(stringResource(shown?.titleRes ?: R.string.settings_title))
-                            if (shown == null) {
-                                MainPage(player, query, { query = it }, { page = it })
-                            } else {
-                                PageBody(shown, player, onSignIn, onSignedOut)
-                            }
-                            Spacer(Modifier.height(32.dp))
-                        }
-                    }
-                }
-                CompositionLocalProvider(
-                    LocalTopChrome provides null,
-                    LocalAppBackdrop provides backdrop,
-                    LocalAppHaze provides haze,
-                ) {
-                    PageTopBar(onBack = back)
-                }
+                Spacer(Modifier.height(32.dp))
             }
         }
     }

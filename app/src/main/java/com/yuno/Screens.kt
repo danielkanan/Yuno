@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.contentColorFor
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -103,6 +104,7 @@ fun HomeScreen(
     onSignIn: () -> Unit,
     onAccount: () -> Unit,
     scrollToTop: Int = 0,
+    pullState: BarPullRefreshState? = null,
 ) {
     // Guest or signed in: same Home feed. Signed out uses an anonymous visitor; sign-in swaps
     // to the account's recommendations after [LibraryData.reset].
@@ -110,7 +112,7 @@ fun HomeScreen(
     LaunchedEffect(signedIn) { lib.home.ensureLoaded() }
     val listState = rememberLazyListState()
     // The bar itself is the refresh control. Other feeds still use the circular indicator.
-    BarPullRefresh(refreshing = lib.home.refreshing, onRefresh = lib.home::refresh) {
+    BarPullRefresh(refreshing = lib.home.refreshing, onRefresh = lib.home::refresh, state = pullState) {
         Box(Modifier.fillMaxSize()) {
             FeedList(
                 lib.home,
@@ -130,7 +132,6 @@ fun HomeScreen(
             )
             PageTopFade(listState)
         }
-        PageTopBar { UpdateAction(); HeaderActions(onSearch, onAccount) }
     }
 }
 
@@ -143,6 +144,7 @@ fun SubscriptionsScreen(
     onSignIn: () -> Unit,
     onAccount: () -> Unit,
     scrollToTop: Int = 0,
+    pullState: BarPullRefreshState? = null,
 ) {
     val signedIn = Account.signedIn
     val openChannel = LocalChannelOpener.current
@@ -169,11 +171,10 @@ fun SubscriptionsScreen(
                 }
             }
             PageTopFade(listState)
-            PageTopBar { HeaderActions(onSearch, onAccount) }
         }
         return
     }
-    BarPullRefresh(refreshing = lib.subscriptions.refreshing, onRefresh = lib.subscriptions::refresh) {
+    BarPullRefresh(refreshing = lib.subscriptions.refreshing, onRefresh = lib.subscriptions::refresh, state = pullState) {
         Box(Modifier.fillMaxSize()) {
             FeedList(
                 lib.subscriptions,
@@ -195,7 +196,6 @@ fun SubscriptionsScreen(
             )
             PageTopFade(listState)
         }
-        PageTopBar { HeaderActions(onSearch, onAccount) }
     }
 }
 
@@ -354,6 +354,7 @@ fun LibraryScreen(
     onSignIn: () -> Unit,
     onAccount: () -> Unit,
     scrollToTop: Int = 0,
+    pullState: BarPullRefreshState? = null,
 ) {
     val signedIn = Account.signedIn
     val localHistory = WatchHistory.videos
@@ -422,19 +423,18 @@ fun LibraryScreen(
         Box(Modifier.fillMaxSize()) {
             libraryList()
             PageTopFade(listState)
-            PageTopBar { HeaderActions(onSearch, onAccount) }
         }
         return
     }
     BarPullRefresh(
         refreshing = lib.history.refreshing,
         onRefresh = { lib.history.refresh(); lib.loadPlaylists() },
+        state = pullState,
     ) {
         Box(Modifier.fillMaxSize()) {
             libraryList()
             PageTopFade(listState)
         }
-        PageTopBar { HeaderActions(onSearch, onAccount) }
     }
 }
 
@@ -492,10 +492,8 @@ fun PlaylistScreen(
     playlist: PlaylistRef,
     feed: FeedState,
     contentPadding: PaddingValues,
-    onBack: () -> Unit,
     onOpen: (VideoItem) -> Unit,
     channelAvatarSeed: Map<String, String?> = emptyMap(),
-    barShown: Boolean = true,
 ) {
     LaunchedEffect(playlist.id) { feed.ensureLoaded() }
     val avatarSeed = remember(channelAvatarSeed) { channelAvatarSeed }
@@ -521,7 +519,6 @@ fun PlaylistScreen(
         }
         PageTopFade(listState)
         }
-        PageTopBar(onBack = onBack, shown = barShown)
     }
 }
 
@@ -557,6 +554,8 @@ class SearchState(private val scope: CoroutineScope) {
         private set
     var generation by mutableStateOf(0)
         private set
+    /** The field in the top bar has focus. The page reads it; the bar writes it. */
+    var fieldFocused by mutableStateOf(false)
     private var job: Job? = null
     private var suggestJob: Job? = null
 
@@ -618,17 +617,9 @@ class SearchState(private val scope: CoroutineScope) {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+/** The search field, in the shared top bar. Focus and the keyboard live with the field. */
 @Composable
-fun SearchScreen(
-    state: SearchState,
-    contentPadding: PaddingValues,
-    onBack: () -> Unit,
-    onOpen: (VideoItem) -> Unit,
-    scrollToTop: Int = 0,
-    barShown: Boolean = true,
-) {
-    val c = MaterialTheme.colorScheme
+fun SearchTopAccessory(state: SearchState) {
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
     val view = LocalView.current
@@ -642,29 +633,60 @@ fun SearchScreen(
         }
     }
     LaunchedEffect(Unit) { showSearchKeyboard() }
-    // Search and Enter both dismiss the keyboard — every field, every time. A hide issued
-    // while the key event is still being dispatched can be undone by the IME, so the
-    // window-level hide is posted to run after it.
-    fun submit() {
-        focus.clearFocus(force = true)
-        keyboard?.hide()
-        view.postDelayed({
-            view.context.getSystemService(InputMethodManager::class.java)
-                ?.hideSoftInputFromWindow(view.windowToken, 0)
-        }, 120)
-        state.submit()
-    }
-    var focused by remember { mutableStateOf(false) }
+    DisposableEffect(state) { onDispose { state.fieldFocused = false } }
+    SearchBarField(
+        query = state.query,
+        onQueryChange = state::updateQuery,
+        onSubmit = { dismissAndSearch(state, focus, keyboard, view) },
+        onClear = {
+            state.updateQuery("")
+            showSearchKeyboard()
+        },
+        focusRequester = searchFocus,
+        onFocusChanged = { state.fieldFocused = it },
+    )
+}
+
+private fun dismissAndSearch(
+    state: SearchState,
+    focus: androidx.compose.ui.focus.FocusManager,
+    keyboard: androidx.compose.ui.platform.SoftwareKeyboardController?,
+    view: android.view.View,
+) {
+    // A hide issued while the key event is still being dispatched can be undone by the IME,
+    // so the window-level hide is posted to run after it.
+    focus.clearFocus(force = true)
+    keyboard?.hide()
+    view.postDelayed({
+        view.context.getSystemService(InputMethodManager::class.java)
+            ?.hideSoftInputFromWindow(view.windowToken, 0)
+    }, 120)
+    state.submit()
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun SearchScreen(
+    state: SearchState,
+    contentPadding: PaddingValues,
+    onOpen: (VideoItem) -> Unit,
+    scrollToTop: Int = 0,
+) {
+    val c = MaterialTheme.colorScheme
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focus = LocalFocusManager.current
+    val view = LocalView.current
+    fun submit() = dismissAndSearch(state, focus, keyboard, view)
     // The keyboard closed by Back or its own button leaves the field focused; drop the focus
     // with it so the history gives way to the results again.
     val imeVisible = WindowInsets.isImeVisible
-    LaunchedEffect(imeVisible) { if (!imeVisible && focused) focus.clearFocus() }
+    LaunchedEffect(imeVisible) { if (!imeVisible && state.fieldFocused) focus.clearFocus() }
     // Past searches, filtered by what's typed: while typing, and on the empty page.
     val history = SearchHistory.matching(state.query)
     val draft = state.query.isNotBlank() &&
         (state.submitted.isEmpty() || state.query.trim() != state.submitted.trim())
     // Suggestions win while drafting; history when focused/empty and not mid-suggestion draft.
-    val showHistory = !draft && history.isNotEmpty() && (focused || state.submitted.isEmpty())
+    val showHistory = !draft && history.isNotEmpty() && (state.fieldFocused || state.submitted.isEmpty())
     val bodyTop = pageBodyTop()
     Box(Modifier.fillMaxSize().background(c.background).overlayTouchBlock()) {
         Box(Modifier.fillMaxSize()) {
@@ -747,23 +769,6 @@ fun SearchScreen(
         }
         }
         }
-        PageTopBar(
-            onBack = onBack,
-            shown = barShown,
-            accessory = {
-                SearchBarField(
-                    query = state.query,
-                    onQueryChange = state::updateQuery,
-                    onSubmit = { submit() },
-                    onClear = {
-                        state.updateQuery("")
-                        showSearchKeyboard()
-                    },
-                    focusRequester = searchFocus,
-                    onFocusChanged = { focused = it },
-                )
-            },
-        )
     }
 }
 

@@ -15,18 +15,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.snap
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.animation.core.animateFloatAsState
@@ -66,6 +60,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -203,15 +198,17 @@ fun YunoApp() {
     val appContext = LocalContext.current.applicationContext
     val lib = remember { LibraryData(scope, appContext) }
     LaunchedEffect(Account.signedIn) { if (Account.signedIn) lib.warmUp() }
-    var settingsOpen by rememberSaveable { mutableStateOf(false) }
-    var openPlaylist by remember { mutableStateOf<PlaylistRef?>(null) }
-    var openChannel by remember { mutableStateOf<String?>(null) }
-    var openSearch by remember { mutableStateOf(false) }
-    LaunchedEffect(openSearch) { if (openSearch) search.reset() }
-    // Kept after closing so the page can slide out with its content.
-    var channelState by remember { mutableStateOf<ChannelState?>(null) }
-    var playlistHold by remember { mutableStateOf<PlaylistRef?>(null) }
-    SideEffect { if (openPlaylist != null) playlistHold = openPlaylist }
+    // BitChord's one back stack. Pushed pages (search, settings, a playlist, a
+    // channel) sit on it; a tab is what is left when the stack is empty.
+    val navigator = remember { AppNavigator(detailDepth = { 0 }, popDetail = { false }, clearDetails = {}) }
+    var settingsQuery by rememberSaveable { mutableStateOf("") }
+    val homePull = remember { BarPullRefreshState() }
+    val subscriptionsPull = remember { BarPullRefreshState() }
+    val libraryPull = remember { BarPullRefreshState() }
+    val channelStates = remember { mutableMapOf<String, ChannelState>() }
+    val playlistFeeds = remember { mutableMapOf<String, FeedState>() }
+    val pageStates = rememberSaveableStateHolder()
+    val pageKeysSeen = remember { mutableSetOf<String>() }
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
     // Shorts: its own feed and players; ‹ (and Back) return to the tab it was opened from.
     // One per process (YunoApplication), so its bank keeps filling with no window open.
@@ -223,13 +220,21 @@ fun YunoApp() {
     var shortsFrom by rememberSaveable { mutableStateOf(Tab.Home) }
     var shortsBackTo by rememberSaveable { mutableStateOf<String?>(null) }
     var shortsListOnTab by rememberSaveable { mutableStateOf(false) }
-    var playlistOverChannel by remember { mutableStateOf(false) }
     LaunchedEffect(NewVideos.opening) {
         val video = NewVideos.opening ?: return@LaunchedEffect
         NewVideos.opening = null
-        settingsOpen = false
+        navigator.clear()
         if (tab == Tab.Shorts) tab = shortsFrom
         player.open(video)
+    }
+    LaunchedEffect(AppRoute.Settings in navigator) {
+        if (AppRoute.Settings !in navigator) settingsQuery = ""
+    }
+    val livePageKeys = navigator.entries.map { AppDestination.Route(it).key }
+    LaunchedEffect(livePageKeys) {
+        val gone = pageKeysSeen.filter { it !in livePageKeys }
+        gone.forEach(pageStates::removeState)
+        pageKeysSeen.removeAll(gone.toSet())
     }
     // Bumped when the already-selected tab is tapped; that tab's list scrolls to the top.
     val scrollToTop = remember { mutableStateMapOf<Tab, Int>() }
@@ -267,7 +272,7 @@ fun YunoApp() {
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     LaunchedEffect(player.expanded) {
         if (player.expanded) {
-            openSearch = false
+            if (navigator.visibleRoute() is AppRoute.Search) navigator.pop()
             focusManager.clearFocus(force = true)
             keyboard?.hide()
         }
@@ -336,15 +341,13 @@ fun YunoApp() {
     fun showChannel(url: String) {
         player.expanded = false
         showNowPlaying = false
-        if (channelState?.url != url) channelState = ChannelState(url, scope)
-        playlistOverChannel = false
-        openChannel = url
+        navigator.push(AppRoute.Channel(url))
     }
 
     fun openShorts(list: ShortsList) {
-        shortsBackTo = openChannel
+        shortsBackTo = (navigator.visibleRoute() as? AppRoute.Channel)?.url
         shortsListOnTab = tab == Tab.Shorts
-        openChannel = null
+        navigator.clear()
         shorts.openList(list)
         if (tab != Tab.Shorts) { shortsFrom = tab; tab = Tab.Shorts }
     }
@@ -359,16 +362,22 @@ fun YunoApp() {
         }
     }
 
+    // One step back, from anywhere: the page on top of the stack, then any tab
+    // but Home back to Home. Settings with a search typed in clears that first.
+    // The gesture and the bar's back button both come here.
+    val canGoBack = navigator.entries.isNotEmpty() || tab != Tab.Home
+    val goBack: () -> Unit = {
+        when (val route = navigator.visibleRoute()) {
+            AppRoute.Settings -> if (settingsQuery.isNotEmpty()) settingsQuery = "" else navigator.pop()
+            null -> if (tab == Tab.Shorts) leaveShorts() else tab = Tab.Home
+            else -> navigator.pop()
+        }
+    }
     BackHandler(enabled = showNowPlaying) {
         if (reduced) showNowPlaying = false else playerSheetMotion.close()
     }
-    BackHandler(enabled = !showNowPlaying && openSearch) { openSearch = false }
-    BackHandler(enabled = !showNowPlaying && tab != Tab.Home && openPlaylist == null && openChannel == null && !openSearch) {
-        if (tab == Tab.Shorts) leaveShorts() else tab = Tab.Home
-    }
-    BackHandler(enabled = !showNowPlaying && openPlaylist != null) { openPlaylist = null }
+    BackHandler(enabled = !showNowPlaying && canGoBack, onBack = goBack)
     BackHandler(enabled = signingIn) { signingIn = false }
-    BackHandler(enabled = !showNowPlaying && openChannel != null && !(playlistOverChannel && openPlaylist != null)) { openChannel = null }
     BackHandler(enabled = tab == Tab.Shorts && shorts.commentsOpen) { shorts.commentsOpen = false }
     // Registered last so it wins: in fullscreen, Back returns to the portrait player first.
     BackHandler(enabled = showFullscreen) { orientation.exitFullscreen() }
@@ -377,11 +386,6 @@ fun YunoApp() {
 
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val density = LocalDensity.current
-    val settingsAway by animateFloatAsState(
-        if (settingsOpen) 1f else 0f,
-        if (reduced) snap() else Motion.MoodiiSpatial(),
-        label = "settingsAway",
-    )
 
     // Shorts (Shorts.kt) play on their own players: the app's video pauses on the way in and
     // carries on, from the same spot in the mini-player, on the way out (Derek, 2026-10-28).
@@ -407,7 +411,7 @@ fun YunoApp() {
         else shortsMorph.animateTo(0f, if (reduced) snap() else tween(ShortsExitMs, easing = ShortsExitEasing))
     }
     SideEffect {
-        StatusBarOverVideo.shorts = tab == Tab.Shorts && openChannel == null
+        StatusBarOverVideo.shorts = tab == Tab.Shorts && navigator.visibleRoute() !is AppRoute.Channel
         shorts.onMessage = { player.actionMessage = it }
         shorts.mainBusy = { player.isBuffering }
     }
@@ -424,7 +428,7 @@ fun YunoApp() {
     }
 
     // A channel opened from Shorts sits over the short, which waits paused.
-    SideEffect { shorts.cover(tab == Tab.Shorts && openChannel != null) }
+    SideEffect { shorts.cover(tab == Tab.Shorts && navigator.visibleRoute() is AppRoute.Channel) }
     BackHandler(enabled = tab == Tab.Shorts && shorts.channelMenu) { shorts.channelMenu = false }
 
     val hazeState = remember { HazeState() }
@@ -471,97 +475,122 @@ fun YunoApp() {
             LocalTopChrome provides topChrome,
         ) {
         Box(Modifier.fillMaxSize().then(pageSample).padding(start = pagesStart)) {
+        // BitChord's page switcher (MainActivity, "content"). Tabs swap outright;
+        // a pushed page crossfades. The top bar is not inside this switcher.
+        val openSearchPage = {
+            search.reset()
+            navigator.push(AppRoute.Search)
+        }
+        val openSettingsPage = { navigator.push(AppRoute.Settings) }
         AnimatedContent(
-            targetState = tab,
+            targetState = when (val entry = navigator.visibleEntry()) {
+                null -> AppDestination.Tab(tab.ordinal)
+                else -> AppDestination.Route(entry)
+            },
+            contentKey = { it.key },
             transitionSpec = {
-                if (reduced) fadeIn(snap()) togetherWith fadeOut(snap())
-                else (fadeIn(tween(Motion.PageEnterMs, easing = Motion.Emphasized)) +
-                    slideInVertically(tween(Motion.PageRiseMs, easing = Motion.Emphasized)) { (it / 35).coerceIn(8, 24) }) togetherWith
-                    fadeOut(tween(Motion.PageExitMs))
+                val initial = initialState
+                val target = targetState
+                val tabSwap = initial is AppDestination.Tab && target is AppDestination.Tab
+                if (tabSwap) {
+                    EnterTransition.None togetherWith ExitTransition.None
+                } else {
+                    fadeIn(tween(180)) togetherWith fadeOut(tween(180))
+                }
             },
             modifier = Modifier.fillMaxSize(),
-            label = "tabs",
-        ) { t ->
-            when (t) {
-                Tab.Home -> HomeScreen(
-                    lib, contentPadding, onOpen = player::open, onSearch = { openSearch = true },
-                    onSignIn = { signingIn = true }, onAccount = { settingsOpen = true },
-                    scrollToTop = scrollToTop[Tab.Home] ?: 0,
-                )
-                Tab.Subscriptions -> SubscriptionsScreen(
-                    lib, contentPadding, onOpen = player::open, onSearch = { openSearch = true },
-                    onSignIn = { signingIn = true }, onAccount = { settingsOpen = true },
-                    scrollToTop = scrollToTop[Tab.Subscriptions] ?: 0,
-                )
-                Tab.Shorts -> ShortsScreen(
-                    shorts,
-                    progress = { shortsMorph.value },
-                    navClearance = stackBottom + NavHeight,
-                    overlayBottom = stackBottom + NavHeight + 28.dp,
-                    onChannel = ::showChannel,
-                )
-                Tab.Library -> LibraryScreen(
-                    lib, contentPadding, onOpen = player::open, onOpenPlaylist = { openPlaylist = it },
-                    onSearch = { openSearch = true },
-                    onSignIn = { signingIn = true }, onAccount = { settingsOpen = true },
-                    scrollToTop = scrollToTop[Tab.Library] ?: 0,
-                )
+            label = "content",
+        ) { destination ->
+            val key = destination.key
+            val pageRoute = (destination as? AppDestination.Route)?.entry?.route
+            val pageContent: @Composable () -> Unit = {
+                when (pageRoute) {
+                    null -> when (Tab.entries[(destination as AppDestination.Tab).index]) {
+                        Tab.Home -> HomeScreen(
+                            lib, contentPadding, onOpen = player::open, onSearch = openSearchPage,
+                            onSignIn = { signingIn = true }, onAccount = openSettingsPage,
+                            scrollToTop = scrollToTop[Tab.Home] ?: 0, pullState = homePull,
+                        )
+                        Tab.Subscriptions -> SubscriptionsScreen(
+                            lib, contentPadding, onOpen = player::open, onSearch = openSearchPage,
+                            onSignIn = { signingIn = true }, onAccount = openSettingsPage,
+                            scrollToTop = scrollToTop[Tab.Subscriptions] ?: 0, pullState = subscriptionsPull,
+                        )
+                        Tab.Shorts -> ShortsScreen(
+                            shorts,
+                            progress = { shortsMorph.value },
+                            navClearance = stackBottom + NavHeight,
+                            overlayBottom = stackBottom + NavHeight + 28.dp,
+                            onChannel = ::showChannel,
+                        )
+                        Tab.Library -> LibraryScreen(
+                            lib, contentPadding, onOpen = player::open,
+                            onOpenPlaylist = { navigator.push(AppRoute.Playlist(it)) },
+                            onSearch = openSearchPage,
+                            onSignIn = { signingIn = true }, onAccount = openSettingsPage,
+                            scrollToTop = scrollToTop[Tab.Library] ?: 0, pullState = libraryPull,
+                        )
+                    }
+                    AppRoute.Search -> SearchScreen(search, contentPadding, onOpen = player::open)
+                    AppRoute.Settings -> SettingsScreen(
+                        player, section = null, query = settingsQuery, onQuery = { settingsQuery = it },
+                        onOpenSection = { navigator.push(AppRoute.SettingsSection(it)) },
+                        onSignIn = { signingIn = true },
+                        onSignedOut = { lib.reset(); player.refreshAccountState() },
+                        contentPadding = contentPadding,
+                    )
+                    is AppRoute.SettingsSection -> SettingsScreen(
+                        player, section = pageRoute.page, query = settingsQuery, onQuery = { settingsQuery = it },
+                        onOpenSection = { navigator.push(AppRoute.SettingsSection(it)) },
+                        onSignIn = { signingIn = true },
+                        onSignedOut = { lib.reset(); player.refreshAccountState() },
+                        contentPadding = contentPadding,
+                    )
+                    is AppRoute.Playlist -> PlaylistScreen(
+                        pageRoute.ref,
+                        playlistFeeds.getOrPut(pageRoute.ref.id) { lib.playlistFeed(pageRoute.ref.id) },
+                        contentPadding,
+                        onOpen = player::open,
+                        channelAvatarSeed = lib.channels.associate { it.id to it.avatar },
+                    )
+                    is AppRoute.Channel -> ChannelScreen(
+                        channelStates.getOrPut(pageRoute.url) { ChannelState(pageRoute.url, scope) },
+                        contentPadding,
+                        onBack = goBack,
+                        onOpen = { v -> if (tab == Tab.Shorts) tab = shortsFrom; player.open(v) },
+                        onOpenShorts = ::openShorts,
+                        onOpenPlaylist = { navigator.push(AppRoute.Playlist(it)) },
+                        onMessage = { player.actionMessage = it },
+                    )
+                }
+            }
+            if (destination is AppDestination.Tab) {
+                pageContent()
+            } else {
+                pageKeysSeen += key
+                pageStates.SaveableStateProvider(key, pageContent)
             }
         }
-
-        AnimatedVisibility(
-            visible = openSearch,
-            enter = if (reduced) fadeIn(snap()) else slideInHorizontally(tween(340, easing = Motion.Emphasized)) { it } + fadeIn(tween(120)),
-            exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
-        ) {
-            SearchScreen(
-                search,
-                contentPadding,
-                onBack = { openSearch = false },
-                onOpen = player::open,
-                barShown = openSearch,
-            )
-        }
-
-        // A playlist opens as a page over the tabs (slides in from the right).
-        AnimatedVisibility(
-            visible = openPlaylist != null,
-            enter = if (reduced) fadeIn(snap()) else slideInHorizontally(tween(340, easing = Motion.Emphasized)) { it } + fadeIn(tween(120)),
-            exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
-        ) {
-            val pl = openPlaylist ?: playlistHold
-            val feed = remember(pl?.id) { pl?.let { lib.playlistFeed(it.id) } }
-            if (pl != null && feed != null) {
-                PlaylistScreen(
-                    pl, feed, contentPadding,
-                    onBack = { openPlaylist = null },
-                    onOpen = player::open,
-                    channelAvatarSeed = lib.channels.associate { it.id to it.avatar },
-                    barShown = openPlaylist != null,
-                )
+        val route = navigator.visibleRoute()
+        if (route !is AppRoute.Channel && !(route == null && tab == Tab.Shorts)) {
+            PageTopBar(
+                onBack = if (route != null) goBack else null,
+                pull = when {
+                    route != null -> null
+                    tab == Tab.Home -> homePull
+                    tab == Tab.Subscriptions -> subscriptionsPull
+                    tab == Tab.Library -> libraryPull
+                    else -> null
+                },
+                accessory = if (route is AppRoute.Search) {{ SearchTopAccessory(search) }} else null,
+                beside = {
+                    if (route == null && tab == Tab.Home) UpdateAction()
+                },
+            ) {
+                if (route == null) HeaderActions(onSearch = openSearchPage, onAccount = openSettingsPage)
             }
         }
-
-        // A channel opens the same way, over everything below the mini-player.
-        AnimatedVisibility(
-            visible = openChannel != null,
-            enter = if (reduced) fadeIn(snap()) else slideInHorizontally(tween(340, easing = Motion.Emphasized)) { it } + fadeIn(tween(120)),
-            exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
-        ) {
-            channelState?.let { ch ->
-                ChannelScreen(
-                    ch, contentPadding, onBack = { openChannel = null },
-                    onOpen = { v -> if (tab == Tab.Shorts) tab = shortsFrom; player.open(v) },
-                    onOpenShorts = ::openShorts,
-                    onOpenPlaylist = { ref ->
-                        playlistOverChannel = openChannel != null
-                        openPlaylist = ref
-                    },
-                    onMessage = { player.actionMessage = it },
-                )
-            }
-        }
-        } // page backdrop (tabs + overlays)
+        } // page backdrop
 
         if (showRail) {
             NavRail(
@@ -570,21 +599,17 @@ fun YunoApp() {
                 onSelect = { t ->
                     player.expanded = false
                     showNowPlaying = false
+                    val covered = navigator.entries.isNotEmpty()
+                    navigator.clear()
                     when {
-                        t == tab && openSearch -> openSearch = false
-                        t == tab && openChannel != null -> openChannel = null
-                        t == tab && openPlaylist != null -> openPlaylist = null
+                        t == tab && covered -> Unit
                         t == tab -> scrollToTop[t] = (scrollToTop[t] ?: 0) + 1
                         else -> {
                             if (t == Tab.Shorts) shortsFrom = tab
-                            openPlaylist = null
-                            openChannel = null
-                            openSearch = false
                             tab = t
                         }
                     }
                 },
-                modifier = Modifier.graphicsLayer { alpha = 1f - settingsAway },
             )
         }
 
@@ -633,18 +658,16 @@ fun YunoApp() {
             if ((player.sheet.isPanel && playerOpen) || shorts.commentsOpen) 1f else 0f,
             if (reduced) snap() else tween(280, easing = Motion.Emphasized), label = "navAside",
         )
+        // A tab is a fresh start: everything pushed over the old one goes with it.
         val onSelectTab: (Tab) -> Unit = { selected ->
             player.expanded = false
+            val covered = navigator.entries.isNotEmpty()
+            navigator.clear()
             when {
-                selected == tab && openSearch -> openSearch = false
-                selected == tab && openChannel != null -> openChannel = null
-                selected == tab && openPlaylist != null -> openPlaylist = null
+                selected == tab && covered -> Unit
                 selected == tab -> scrollToTop[selected] = (scrollToTop[selected] ?: 0) + 1
                 else -> {
                     if (selected == Tab.Shorts) shortsFrom = tab
-                    openPlaylist = null
-                    openChannel = null
-                    openSearch = false
                     tab = selected
                 }
             }
@@ -667,9 +690,8 @@ fun YunoApp() {
                     .fillMaxWidth()
                     .padding(start = NavBarGutter, end = NavBarGutter, bottom = stackBottom)
                     .graphicsLayer {
-                        val away = maxOf(navAside, settingsAway)
-                        translationY = away * (NavHeight + stackBottom + 24.dp).toPx()
-                        alpha = 1f - away
+                        translationY = navAside * (NavHeight + stackBottom + 24.dp).toPx()
+                        alpha = 1f - navAside
                     },
             )
         } else {
@@ -680,9 +702,8 @@ fun YunoApp() {
                     .fillMaxWidth()
                     .padding(bottom = stackBottom)
                     .graphicsLayer {
-                        val away = maxOf(navAside, settingsAway)
-                        translationY = away * (NavHeight + stackBottom + 24.dp).toPx()
-                        alpha = 1f - away
+                        translationY = navAside * (NavHeight + stackBottom + 24.dp).toPx()
+                        alpha = 1f - navAside
                     },
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -707,26 +728,6 @@ fun YunoApp() {
             }
         }
 
-        // Shorts keeps this same bar. Like, comments, share and the channel sit on the
-        // video (Shorts.kt), and the progress line sits just above the bar.
-        AnimatedVisibility(
-            visible = settingsOpen,
-            enter = if (reduced) fadeIn(snap()) else
-                scaleIn(spring(dampingRatio = 0.82f, stiffness = 380f), initialScale = 0.94f) +
-                    slideInVertically(spring(dampingRatio = 0.82f, stiffness = 380f)) { it / 12 } + fadeIn(tween(220)),
-            exit = if (reduced) fadeOut(snap()) else
-                scaleOut(spring(dampingRatio = 0.82f, stiffness = 380f), targetScale = 0.96f) +
-                    slideOutVertically(spring(dampingRatio = 0.82f, stiffness = 380f)) { it / 16 } + fadeOut(tween(160)),
-        ) {
-            SettingsScreen(
-                player = player,
-                active = settingsOpen,
-                onClose = { settingsOpen = false },
-                onSignIn = { signingIn = true },
-                onSignedOut = { lib.reset(); player.refreshAccountState() },
-                wide = wide,
-            )
-        }
         if (signingIn) {
             SignInScreen(
                 onDone = { signingIn = false; lib.reset(); player.refreshAccountState() },

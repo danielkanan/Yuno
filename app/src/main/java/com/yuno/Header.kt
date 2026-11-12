@@ -1,7 +1,9 @@
 package com.yuno
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseInCubic
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -26,6 +28,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -54,6 +57,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.ContentScale
@@ -67,6 +72,7 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yuno.icons.SfIcons
+import kotlin.math.roundToInt
 import dev.chrisbanes.haze.ExperimentalHazeApi
 import dev.chrisbanes.haze.HazeInputScale
 import dev.chrisbanes.haze.hazeEffect
@@ -345,6 +351,9 @@ fun PageTopBar(
     // Passed through to the chrome layer. That layer is outside the page, so it
     // cannot see [LocalBarPullRefresh] itself.
     pull: BarPullRefreshState? = null,
+    // Sits just before the actions pill, outside it. The update chip keeps its
+    // own fill; the pill is only the icon actions.
+    beside: @Composable () -> Unit = {},
     actions: @Composable () -> Unit = {},
 ) {
     val glass = LocalLiquidGlassEnabled.current && isGlassSupported()
@@ -366,7 +375,7 @@ fun PageTopBar(
                 }
             }
             SideEffect {
-                entry.content = { PageTopBar(onBack, accessory, pull = pullState, actions = actions) }
+                entry.content = { PageTopBar(onBack, accessory, pull = pullState, beside = beside, actions = actions) }
                 host.tick++
             }
         }
@@ -398,6 +407,10 @@ fun PageTopBar(
             }
         }
         val leading = if (onBack != null) PageGutter + TopControl + AccessoryGap else PageGutter
+        // BitChord's trailing row (FrostedTopBar): the accessory takes the
+        // space up to the actions, and the actions keep their own width at
+        // the end. The size animation is on the pill, not on this row — a
+        // spring out here clips the buttons instead of shrinking the glass.
         Row(
             Modifier
                 .align(Alignment.CenterEnd)
@@ -414,32 +427,101 @@ fun PageTopBar(
                 ) { accessory() }
                 Spacer(Modifier.width(AccessoryGap))
             }
-            actions()
+            beside()
+            PageActions(content = actions)
         }
     }
 }
 
 /**
- * Search and the account, one pill. A single control would be a circle; these
- * two take Apple's 10dp gap and 1.5dp end inset, which lands the pill at 101dp.
+ * One shared pill for every action at the right of the bar. Brought over from
+ * BitChord's [ArtworkPageActions]: the glass is outside the spring, so the
+ * pill's own shape shrinks and grows, and the right edge stays put.
+ */
+@Composable
+private fun PageActions(content: @Composable () -> Unit) {
+    ActionsRow(
+        modifier = Modifier
+            .floatingChrome(CircleShape)
+            .animateContentSize(
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMediumLow,
+                ),
+            )
+            // One icon and no inset is a true circle, the back button's size.
+            // Once another action exists, Apple's inset opens at both ends.
+            // Layout padding inside the surface, not an outer margin.
+            .actionEdgePadding(),
+    ) {
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides TopControl) {
+            content()
+        }
+    }
+}
+
+/**
+ * The actions side by side, centred on the pill's height, with Apple's gap
+ * between each and the one before it.
+ *
+ * Each gap opens with the width of the action after it, so one sliding in from
+ * nothing brings its gap with it rather than the row jumping by a gap's width
+ * the frame it appears. From BitChord's ActionsRow.
+ */
+@Composable
+private fun ActionsRow(modifier: Modifier, content: @Composable () -> Unit) {
+    Layout(content = content, modifier = modifier) { measurables, constraints ->
+        val placeables = measurables.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
+        val target = TopControl.roundToPx()
+        val gap = ActionGap.toPx()
+        val gaps = placeables.mapIndexed { index, placeable ->
+            if (index == 0) 0 else (gap * (placeable.width.toFloat() / target).coerceIn(0f, 1f)).roundToInt()
+        }
+        val width = placeables.sumOf { it.width } + gaps.sum()
+        val height = placeables.maxOfOrNull { it.height } ?: 0
+        layout(width, height) {
+            var x = 0
+            placeables.forEachIndexed { index, placeable ->
+                x += gaps[index]
+                placeable.placeRelative(x, (height - placeable.height) / 2)
+                x += placeable.width
+            }
+        }
+    }
+}
+
+/**
+ * Edge padding that collapses only for the single-action state.
+ *
+ * An action slot can measure anywhere from nothing up to a full target, so the
+ * content width — not how many composables were emitted — decides. At exactly
+ * one icon the pill stays circular; past that it gains Apple's inset and keeps
+ * fully round ends. From BitChord's artworkActionEdgePadding.
+ */
+private fun Modifier.actionEdgePadding(): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints.copy(minWidth = 0))
+    val oneActionWidth = TopControl.roundToPx()
+    val extraActionFraction = ((placeable.width - oneActionWidth).toFloat() / oneActionWidth)
+        .coerceIn(0f, 1f)
+    val edgePadding = (ActionEdge.roundToPx() * extraActionFraction).roundToInt()
+    val width = (placeable.width + edgePadding * 2).coerceIn(constraints.minWidth, constraints.maxWidth)
+    layout(width, placeable.height) {
+        placeable.placeRelative(edgePadding, 0)
+    }
+}
+
+/**
+ * Search and the account, as two slots in [PageActions]. The pill, its inset,
+ * and the gap between them belong to that row.
  */
 @Composable
 fun HeaderActions(onSearch: () -> Unit, onAccount: () -> Unit) {
     val glass = LocalLiquidGlassEnabled.current && isGlassSupported()
     val tint = if (glass) glassContentColor() else MaterialTheme.colorScheme.onSurface
-    Row(
-        Modifier
-            .height(TopControl)
-            .floatingChrome(RoundedCornerShape(percent = 50))
-            .padding(horizontal = ActionEdge),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(TopControl).pressable(onClick = onSearch), contentAlignment = Alignment.Center) {
-            Icon(SfIcons.Search, contentDescription = "Search", tint = tint, modifier = Modifier.size(24.dp))
-        }
-        Spacer(Modifier.width(ActionGap))
-        AccountAction(onAccount)
+    Box(Modifier.size(TopControl).pressable(onClick = onSearch), contentAlignment = Alignment.Center) {
+        Icon(SfIcons.Search, contentDescription = "Search", tint = tint, modifier = Modifier.size(24.dp))
     }
+    AccountAction(onAccount)
 }
 
 /** The account photo at 28dp, or a person glyph on a filled circle when signed out. */

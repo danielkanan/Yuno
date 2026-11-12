@@ -19,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -183,13 +184,19 @@ fun BarPullRefresh(
     refreshing: Boolean,
     onRefresh: () -> Unit,
     enabled: Boolean = true,
+    /** Shared with the top bar when that bar is drawn outside this page. */
+    state: BarPullRefreshState? = null,
     content: @Composable () -> Unit,
 ) {
     val density = LocalDensity.current
-    val state = remember(density) {
+    val owned = remember(density) {
         BarPullRefreshState().apply {
             thresholdPx = with(density) { BarPullThreshold.toPx() }
         }
+    }
+    val state = state ?: owned
+    if (state !== owned) {
+        SideEffect { state.thresholdPx = with(density) { BarPullThreshold.toPx() } }
     }
     val view = LocalView.current
     val scope = rememberCoroutineScope()
