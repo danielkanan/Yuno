@@ -12,7 +12,7 @@ changes something people see or feel (faster, fewer errors); then say that.
 
 ## 1.0.0
 
-![Yuno](https://github.com/danielkanan/Yuno/raw/main/docs/banner.png)
+![Yuno](https://github.com/danielkanan/Yuno/raw/main/docs/banner.png?v=2)
 
 ### First release of Yuno
 - Home, Subscriptions, Shorts, Search, and Library
