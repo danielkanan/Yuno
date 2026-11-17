@@ -6,6 +6,9 @@
 
     <!-- Accessibility labels of the round buttons on the video. -->
     <string name="video_audio_only">Audio only</string>
+    <string name="video_loop">Loop</string>
+    <string name="video_loop_on">Loop on</string>
+    <string name="video_loop_off">Loop off</string>
     <!-- Accessibility label of the filled audio-only button shown while audio only is on (tap turns it off). -->
     <string name="video_audio_only_on">Audio only is on</string>
     <string name="video_playback_speed">Playback speed</string>

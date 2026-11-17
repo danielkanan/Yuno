@@ -10,6 +10,40 @@ changes something people see or feel (faster, fewer errors); then say that.
 
 ## Unreleased
 
+### Fixed
+- Closing the mini-player by swiping no longer flashes it back in place before it goes away.
+
+## 1.0.3
+
+### New
+- **Downloads:** save a video (or just its sound) to watch with no internet. Tap Download under the video, or long-press any video. They are in Library › Downloads.
+- **Incognito:** a switch in Settings. While it's on, nothing you watch or search goes into your YouTube or Yuno history.
+- Playlists have **Play all** and **Shuffle**, like the YouTube app.
+- Sort a playlist by Most popular, Newest or Oldest, and show only its Videos or Shorts.
+- Tapping a video in a playlist keeps playing the rest of the playlist after it.
+
+### Fixed
+- Search finds songs and videos even when the name is misspelt ("orada ovta tamil song" used to show nothing), and shows YouTube's "Did you mean".
+- Search results keep loading as you scroll, instead of stopping after the first few.
+- Search and suggestions are ranked for your country.
+
+## 1.0.2
+
+### New
+
+- **Swipe the mini-player.** Swipe it right to close the video, or left to pause and play.
+- **Up next that knows you.** Signed in, songs continue with your own YouTube Mix and other videos with what YouTube would pick for you, in autoplay and under "More videos".
+- **Open YouTube links in Yuno.** Share a YouTube link to Yuno, or pick Yuno under "Open with".
+- **Dislike counts are back**, from Return YouTube Dislike. Turn them off in Settings › Playback.
+- **Loop a video** with the new repeat button on the player.
+- **Quality on mobile data.** Pick a lower quality for when you're off Wi-Fi in Settings › Playback.
+
+## 1.0.1
+
+### New
+
+- **Autoplay.** When your queue runs out, a related video plays next, even with the screen off. Turn it off in Settings › Playback.
+
 ## 1.0.0
 
 ![Yuno](https://github.com/danielkanan/Yuno/raw/main/docs/banner.png?v=2)

@@ -90,7 +90,7 @@ object WatchHistory {
     }
 
     fun record(item: VideoItem) {
-        if (item.id.isBlank()) return
+        if (item.id.isBlank() || Incognito.on) return
         val next = buildList {
             add(item)
             videos.filter { it.id != item.id }.forEach { add(it) }

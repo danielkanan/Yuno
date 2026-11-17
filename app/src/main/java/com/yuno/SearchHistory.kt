@@ -30,7 +30,7 @@ object SearchHistory {
 
     fun add(query: String) {
         val q = query.trim()
-        if (q.isEmpty()) return
+        if (q.isEmpty() || Incognito.on) return
         save(listOf(q) + entries.filterNot { it.equals(q, ignoreCase = true) })
     }
 

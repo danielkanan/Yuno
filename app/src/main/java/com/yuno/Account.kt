@@ -344,7 +344,7 @@ object InnerTube {
         val page = parseFeed(postAny("search", body))
         if (page.videos.isNotEmpty() || next != null) return@withContext page
         // NewPipe search as a last resort (same path as the Search tab).
-        val videos = YouTube.search(GUEST_HOME_QUERY)
+        val videos = YouTube.search(GUEST_HOME_QUERY).videos
         if (videos.isEmpty()) throw IOException("Couldn't load recommendations.")
         FeedPage(videos, null)
     }
@@ -721,6 +721,58 @@ object InnerTube {
 
     /** One video being watched: the tracking URL for its watch-time pings. */
     class WatchSession(val videoId: String, val watchtimeUrl: String, val cpn: String)
+
+    /** What YouTube would play after a video for this account: its autoplay pick and the related list. */
+    data class UpNext(val autoplayId: String?, val related: List<VideoItem>) {
+        /** The autoplay pick first (with its details from the list when it's there), then the rest in order. */
+        val inOrder: List<VideoItem>
+            get() {
+                val pick = autoplayId ?: return related
+                val first = related.firstOrNull { it.id == pick } ?: VideoItem(
+                    id = pick, title = "", channel = "", channelUrl = null,
+                    thumbnail = "https://i.ytimg.com/vi/$pick/hqdefault.jpg", avatar = null,
+                    durationSec = 0, views = -1, uploaded = null,
+                )
+                return listOf(first) + related.filter { it.id != pick }
+            }
+    }
+
+    /**
+     * Up next for the signed-in account, from the same `next` request youtube.com's watch page makes.
+     * Unlike NewPipe's related list (fetched signed out, so the same for everyone) it follows the
+     * account's history, likes and subscriptions. A song gets the account's Mix instead: YouTube's
+     * radio built from what you listen to and like, as in the YouTube app.
+     */
+    fun personalUpNext(videoId: String, music: Boolean): UpNext {
+        if (music) {
+            val mix = mix(videoId).filter { it.id != videoId }
+            if (mix.isNotEmpty()) return UpNext(mix.first().id, mix)
+        }
+        return parseUpNext(post("next", JSONObject().put("videoId", videoId)))
+    }
+
+    /** The account's Mix for [videoId] (playlist "RD" + id), in play order. */
+    fun mix(videoId: String): List<VideoItem> =
+        parseMix(post("next", JSONObject().put("videoId", videoId).put("playlistId", "RD$videoId")))
+
+    internal fun parseUpNext(root: JSONObject): UpNext {
+        val watch = root.optJSONObject("contents")?.optJSONObject("twoColumnWatchNextResults")
+        val autoplay = watch?.optJSONObject("autoplay")?.optJSONObject("autoplay")?.optJSONArray("sets")
+            ?.optJSONObject(0)?.optJSONObject("autoplayVideo")?.optJSONObject("watchEndpoint")
+            ?.optString("videoId")?.ifBlank { null }
+        val related = watch?.optJSONObject("secondaryResults")?.let { parseFeed(it).videos }.orEmpty()
+        return UpNext(autoplay, related)
+    }
+
+    internal fun parseMix(root: JSONObject): List<VideoItem> {
+        val videos = LinkedHashMap<String, VideoItem>()
+        root.walk { key, obj ->
+            if (key == "playlistPanelVideoRenderer" && !isMembersOnly(obj) && !isLive(obj)) {
+                parseVideoRenderer(obj)?.let { videos.putIfAbsent(it.id, it) }
+            }
+        }
+        return videos.values.toList()
+    }
 
     /**
      * Starts watching [videoId] on the account, as the web player does: fetch the signed-in

@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.FormatListBulleted
+import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.ClosedCaption
 import androidx.compose.material.icons.rounded.Code
@@ -36,6 +37,7 @@ import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PictureInPictureAlt
+import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.SystemUpdateAlt
 import androidx.compose.material.icons.rounded.ZoomOutMap
@@ -237,6 +239,11 @@ private fun AccountRow(search: SettingsSearch, onOpen: (SettingsPage) -> Unit) {
                 onClick = { onOpen(SettingsPage.Account) },
             )
         }
+        val incognitoTitle = stringResource(R.string.settings_incognito_title)
+        val incognitoLine = stringResource(R.string.settings_incognito_line)
+        row(incognitoTitle, incognitoLine, "private", "history", "pause") {
+            ToggleRow(SfIcons.VisibilityOff, incognitoTitle, incognitoLine, Incognito.on) { Incognito.set(it) }
+        }
     }
 }
 
@@ -254,6 +261,31 @@ private fun PlaybackBody(player: PlayerState, search: SettingsSearch) {
                 SeekStep.choices.map { stringResource(R.string.settings_seconds_short, it.toString()) },
                 SeekStep.choices.indexOf(SeekStep.seconds).coerceAtLeast(0),
             ) { SeekStep.set(SeekStep.choices[it]) }
+        }
+        val autoplayTitle = stringResource(R.string.settings_autoplay_title)
+        val autoplayLine = stringResource(R.string.settings_autoplay_line)
+        row(autoplayTitle, autoplayLine, "up next", "related") {
+            ToggleRow(Icons.AutoMirrored.Rounded.PlaylistPlay, autoplayTitle, autoplayLine, Autoplay.on) { Autoplay.set(it) }
+        }
+        val mobileTitle = stringResource(R.string.settings_mobile_quality_title)
+        val mobileLine = stringResource(R.string.settings_mobile_quality_line)
+        row(mobileTitle, mobileLine, "data", "cellular", "wifi") {
+            val values = listOf(QualityPreference.SAME_AS_WIFI, 0, 360, 480, 720)
+                .let { if (QualityPreference.mobile in it) it else it + QualityPreference.mobile }
+            val sameLabel = stringResource(R.string.settings_mobile_quality_same)
+            val autoLabel = stringResource(R.string.video_quality_auto)
+            ChoiceRow(
+                Icons.Rounded.SignalCellularAlt,
+                mobileTitle,
+                mobileLine,
+                values.map { v -> when (v) { QualityPreference.SAME_AS_WIFI -> sameLabel; 0 -> autoLabel; else -> "${v}p" } },
+                values.indexOf(QualityPreference.mobile).coerceAtLeast(0),
+            ) { QualityPreference.chooseMobile(values[it]) }
+        }
+        val dislikesTitle = stringResource(R.string.settings_dislikes_title)
+        val dislikesLine = stringResource(R.string.settings_dislikes_line)
+        row(dislikesTitle, dislikesLine, "return youtube dislike", "ryd") {
+            ToggleRow(SfIcons.ThumbDown, dislikesTitle, dislikesLine, ReturnDislike.enabled) { ReturnDislike.set(it) }
         }
         val chaptersTitle = stringResource(R.string.settings_chapters_open_title)
         val chaptersLine = stringResource(R.string.settings_chapters_open_line)

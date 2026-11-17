@@ -15,6 +15,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.schabi.newpipe.extractor.Image
 import org.schabi.newpipe.extractor.MediaFormat
+import org.schabi.newpipe.extractor.Page
 import org.schabi.newpipe.extractor.channel.ChannelInfo
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabInfo
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabs
@@ -26,7 +27,7 @@ import org.schabi.newpipe.extractor.exceptions.GeographicRestrictionException
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 import org.schabi.newpipe.extractor.exceptions.SignInConfirmNotBotException
 import org.schabi.newpipe.extractor.search.SearchInfo
-import org.schabi.newpipe.extractor.services.youtube.linkHandler.YoutubeSearchQueryHandlerFactory
+import org.schabi.newpipe.extractor.linkhandler.SearchQueryHandler
 import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.AudioTrackType
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
@@ -174,11 +175,43 @@ object YouTube {
 
     fun watchUrl(id: String) = "https://www.youtube.com/watch?v=$id"
 
-    suspend fun search(query: String): List<VideoItem> = withContext(Dispatchers.IO) {
-        val handler = service.searchQHFactory.fromQuery(query, listOf(YoutubeSearchQueryHandlerFactory.VIDEOS), "")
-        SearchInfo.getInfo(service, handler).relatedItems
-            .filterIsInstance<StreamInfoItem>()
-            .mapNotNull { it.toVideoItem() }
+    /** One page of search results; [more] fetches the next one (null at the end). */
+    class SearchPage(
+        val videos: List<VideoItem>,
+        /** YouTube's "Did you mean" spelling, when it has one. */
+        val didYouMean: String?,
+        internal val handler: SearchQueryHandler,
+        internal val next: Page?,
+    ) {
+        val hasMore get() = next != null
+    }
+
+    /**
+     * Searches like youtube.com does: with no "videos only" filter. That filter turns off YouTube's
+     * spelling fixes, so a misspelt query ("orada ovta tamil song") found nothing at all; unfiltered,
+     * YouTube still finds the song. Channels, playlists and Shorts shelves are dropped here.
+     */
+    suspend fun search(query: String): SearchPage = withContext(Dispatchers.IO) {
+        val handler = service.searchQHFactory.fromQuery(query, emptyList(), "")
+        val info = SearchInfo.getInfo(service, handler)
+        SearchPage(
+            videos = info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toVideoItem() },
+            didYouMean = info.searchSuggestion?.takeIf { it.isNotBlank() && !it.equals(query.trim(), ignoreCase = true) },
+            handler = handler,
+            next = info.nextPage?.takeIf { Page.isValid(it) },
+        )
+    }
+
+    /** The page after [page], or null when there is none. */
+    suspend fun searchMore(page: SearchPage): SearchPage? = withContext(Dispatchers.IO) {
+        val next = page.next ?: return@withContext null
+        val more = SearchInfo.getMoreItems(service, page.handler, next)
+        SearchPage(
+            videos = more.items.filterIsInstance<StreamInfoItem>().mapNotNull { it.toVideoItem() },
+            didYouMean = page.didYouMean,
+            handler = page.handler,
+            next = more.nextPage?.takeIf { Page.isValid(it) },
+        )
     }
 
     suspend fun searchSuggestions(query: String): List<String> = withContext(Dispatchers.IO) {
@@ -257,6 +290,12 @@ object YouTube {
             videosTab = videosTab,
         )
     }
+
+    /** [info]'s related videos that can play here: regular videos only, no Shorts or live. */
+    fun related(info: StreamInfo): List<VideoItem> =
+        info.relatedItems.filterIsInstance<StreamInfoItem>()
+            .filterNot { it.isShortFormContent }
+            .mapNotNull { it.toVideoItem() }
 
     private fun StreamInfoItem.toVideoItem(): VideoItem? {
         // Live and upcoming entries need HLS handling that isn't built yet.
@@ -474,21 +513,51 @@ object BotCheck {
  */
 object QualityPreference {
     private const val KEY = "quality_height"
+    private const val KEY_MOBILE = "quality_height_mobile"
+    /** [mobile]'s value for "follow the Wi-Fi choice". */
+    const val SAME_AS_WIFI = -1
     private var prefs: SharedPreferences? = null
+    private var connectivity: android.net.ConnectivityManager? = null
 
     @Volatile
-    var height: Int? = null
+    private var wifiHeight: Int? = null
+
+    /**
+     * Quality on mobile data (Settings › Playback): [SAME_AS_WIFI], 0 for Auto, or a height.
+     * Saves a data plan, as ReVanced's separate Wi-Fi / mobile default quality does.
+     */
+    var mobile by androidx.compose.runtime.mutableIntStateOf(SAME_AS_WIFI)
         private set
+
+    /** The chosen height for the network the phone is on now; null is Auto. */
+    val height: Int?
+        get() = if (onMobileData() && mobile != SAME_AS_WIFI) mobile.takeIf { it > 0 } else wifiHeight
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences("playback", Context.MODE_PRIVATE)
-        height = prefs?.getInt(KEY, 0)?.takeIf { it > 0 }?.takeIf { it in QUALITY_LADDER }
+        connectivity = context.getSystemService(android.net.ConnectivityManager::class.java)
+        wifiHeight = prefs?.getInt(KEY, 0)?.takeIf { it > 0 }?.takeIf { it in QUALITY_LADDER }
+        mobile = prefs?.getInt(KEY_MOBILE, SAME_AS_WIFI)
+            ?.takeIf { it == SAME_AS_WIFI || it == 0 || it in QUALITY_LADDER } ?: SAME_AS_WIFI
     }
 
+    /** The quality sheet's pick: kept for the network it was made on. */
     fun set(value: Int?) {
-        height = value
+        if (onMobileData() && mobile != SAME_AS_WIFI) {
+            chooseMobile(value ?: 0)
+            return
+        }
+        wifiHeight = value
         prefs?.edit()?.putInt(KEY, value ?: 0)?.apply()
     }
+
+    fun chooseMobile(value: Int) {
+        mobile = value
+        prefs?.edit()?.putInt(KEY_MOBILE, value)?.apply()
+    }
+
+    /** On a metered network (mobile data, a hotspot); Wi-Fi and Ethernet are not. */
+    private fun onMobileData(): Boolean = connectivity?.isActiveNetworkMetered == true
 }
 
 /** Standard rungs shown in the quality sheet (matches YouTube's labels). */

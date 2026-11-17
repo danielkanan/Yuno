@@ -24,6 +24,7 @@ import androidx.compose.material.icons.rounded.FullscreenExit
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PictureInPictureAlt
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.withFrameNanos
@@ -558,6 +559,9 @@ fun VideoContent(
                         )
                     } else {
                         Spacer(Modifier.weight(1f))
+                        OverlayTile(stringResource(R.string.video_loop), enabled, tool, filled = state.looping, onClick = { touched(); state.toggleLoop() }) { ink ->
+                            Icon(Icons.Rounded.RepeatOne, null, tint = ink, modifier = Modifier.size(tool * 0.5f))
+                        }
                         OverlayTile(stringResource(R.string.video_audio_only), enabled, tool, filled = AudioOnly.enabled, onClick = { touched(); state.setAudioOnly(!AudioOnly.enabled) }) { ink ->
                             Icon(Icons.Outlined.Headphones, null, tint = ink, modifier = Modifier.size(tool * 0.5f))
                         }

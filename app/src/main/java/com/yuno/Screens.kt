@@ -30,6 +30,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.contentColorFor
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -372,6 +373,19 @@ fun LibraryScreen(
             contentPadding = contentPadding.withTop(pageContentTop()),
         ) {
             item(key = "page-title") { LargePageTitle("Library", fontSize = LargePageTitleCompactFontSize) }
+            if (Incognito.on) item(key = "incognito") { IncognitoBanner() }
+            val downloads = Downloads.all
+            if (downloads.isNotEmpty()) {
+                item(key = "downloadsTitle") { SectionTitle("Downloads") }
+                item(key = "downloads") {
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = PageGutter),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        items(downloads, key = { "d-" + it.item.id }) { d -> DownloadCard(d) { onOpen(d.item) } }
+                    }
+                }
+            }
             item(key = "historyTitle") { SectionTitle("History") }
             item(key = "history") {
                 val history = if (signedIn) lib.history.videos else localHistory
@@ -454,6 +468,84 @@ private fun HistoryCard(video: VideoItem, onClick: () -> Unit) {
     }
 }
 
+/** "You're incognito": history is paused, with a way to turn it back on. */
+@Composable
+private fun IncognitoBanner() {
+    val c = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .padding(horizontal = PageGutter, vertical = 6.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(c.surfaceContainerHigh)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(SfIcons.VisibilityOff, null, tint = c.onSurface, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text("You're incognito", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text("What you watch and search isn't saved.", color = c.onSurfaceVariant, fontSize = 13.sp)
+        }
+        TextLink("Turn off") { Incognito.set(false) }
+    }
+}
+
+/** A saved video: plays offline when done, shows progress while saving, retries when stopped. */
+@Composable
+private fun DownloadCard(d: Download, onPlay: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    val video = d.item
+    Column(
+        Modifier.width(168.dp).pressable(pressedScale = 0.97f, lift = true) {
+            when {
+                d.done -> onPlay()
+                d.state == Download.State.Failed -> Downloads.retry(video.id)
+                else -> Unit
+            }
+        },
+    ) {
+        Box {
+            Thumbnail(video.thumbnail, Modifier.fillMaxWidth().aspectRatio(16f / 9f), radius = FeedVideoThumbRadius)
+            if (d.done) DurationPill(video.durationSec, Modifier.align(Alignment.BottomEnd).padding(6.dp), small = true)
+            else Box(
+                Modifier.matchParentSize().clip(RoundedCornerShape(FeedVideoThumbRadius.dp)).background(Color.Black.copy(alpha = 0.55f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    when (d.state) {
+                        Download.State.Failed -> "Tap to retry"
+                        Download.State.Queued -> "Waiting…"
+                        else -> "${(d.progress * 100).toInt()}%"
+                    },
+                    color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                )
+            }
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(26.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.6f))
+                    .pressable { Downloads.delete(video.id) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(SfIcons.Close, "Delete download", tint = Color.White, modifier = Modifier.size(14.dp))
+            }
+        }
+        Spacer(Modifier.height(7.dp))
+        FadingTitle(
+            text = video.title,
+            style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, lineHeight = 16.sp),
+        )
+        Text(
+            if (d.quality == DownloadQuality.AudioOnly) "Audio only" else d.quality.label,
+            color = c.onSurfaceVariant, fontSize = 12.sp, maxLines = 1,
+        )
+    }
+}
+
 @Composable
 private fun PlaylistTile(playlist: PlaylistRef, modifier: Modifier, onClick: () -> Unit) {
     val c = MaterialTheme.colorScheme
@@ -486,19 +578,38 @@ private fun PlaylistTile(playlist: PlaylistRef, modifier: Modifier, onClick: () 
     }
 }
 
-/** A playlist's videos (Watch later, Liked, or the user's own). */
+/** A playlist's videos (Watch later, Liked, or the user's own), with Play all, Shuffle, sort and filters. */
 @Composable
 fun PlaylistScreen(
     playlist: PlaylistRef,
     feed: FeedState,
     contentPadding: PaddingValues,
     onOpen: (VideoItem) -> Unit,
+    onPlayAll: (List<VideoItem>) -> Unit,
     channelAvatarSeed: Map<String, String?> = emptyMap(),
 ) {
     LaunchedEffect(playlist.id) { feed.ensureLoaded() }
     val avatarSeed = remember(channelAvatarSeed) { channelAvatarSeed }
     val listState = rememberLazyListState()
     val top = pageBodyTop()
+    val scope = rememberCoroutineScope()
+    var sort by remember(playlist.id) { mutableStateOf(PlaylistSort.Playlist) }
+    var filter by remember(playlist.id) { mutableStateOf(PlaylistFilter.All) }
+    var preparing by remember(playlist.id) { mutableStateOf(false) }
+    val shown = remember(feed.videos, sort, filter) { PlaylistView.apply(feed.videos, sort, filter) }
+    val hasShorts = remember(feed.videos) { feed.videos.any(PlaylistView::isShort) }
+    // Sort and filter need the whole playlist, not just the pages scrolled into view so far.
+    fun wholeList(then: () -> Unit = {}) {
+        scope.launch { feed.loadAll(); then() }
+    }
+    fun play(shuffle: Boolean) {
+        preparing = true
+        wholeList {
+            preparing = false
+            val list = PlaylistView.apply(feed.videos, sort, filter)
+            onPlayAll(if (shuffle) list.shuffled() else list)
+        }
+    }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Box(Modifier.fillMaxSize()) {
         if (feed.videos.isEmpty() && !feed.loading && feed.error == null && !feed.hasMore) {
@@ -510,10 +621,35 @@ fun PlaylistScreen(
             FeedList(
                 feed,
                 contentPadding.withTop(top),
-                onOpen,
-                header = { item(key = "page-title") { LargePageTitle(playlist.title, barAligned = false) } },
+                // As in YouTube: a video tapped in a playlist plays on through the rest of it.
+                { v ->
+                    val at = shown.indexOfFirst { it.id == v.id }
+                    if (at < 0) onOpen(v) else onPlayAll(shown.drop(at))
+                },
+                header = {
+                    item(key = "page-title") { LargePageTitle(playlist.title, barAligned = false) }
+                    item(key = "play-buttons") {
+                        PlaylistPlayButtons(
+                            busy = preparing,
+                            enabled = feed.videos.isNotEmpty(),
+                            onPlayAll = { play(shuffle = false) },
+                            onShuffle = { play(shuffle = true) },
+                        )
+                    }
+                    item(key = "playlist-chips") {
+                        PlaylistChips(
+                            sort = sort,
+                            filter = filter,
+                            showFilters = hasShorts || filter != PlaylistFilter.All,
+                            onSort = { sort = it; if (it != PlaylistSort.Playlist) wholeList() },
+                            onFilter = { filter = it; if (it != PlaylistFilter.All) wholeList() },
+                        )
+                    }
+                },
                 indicatorTop = topBarHeight(),
                 listState = listState,
+                videos = shown,
+                filterScrollKey = sort to filter,
                 channelAvatarSeed = avatarSeed,
             )
         }
@@ -554,10 +690,19 @@ class SearchState(private val scope: CoroutineScope) {
         private set
     var generation by mutableStateOf(0)
         private set
+    /** YouTube's "Did you mean" for the submitted search, if any. */
+    var didYouMean by mutableStateOf<String?>(null)
+        private set
+    /** A further page is being fetched (the list's end shows a placeholder meanwhile). */
+    var loadingMore by mutableStateOf(false)
+        private set
+    var hasMore by mutableStateOf(false)
+        private set
     /** The field in the top bar has focus. The page reads it; the bar writes it. */
     var fieldFocused by mutableStateOf(false)
     private var job: Job? = null
     private var suggestJob: Job? = null
+    private var lastPage: YouTube.SearchPage? = null
 
     fun reset() {
         job?.cancel()
@@ -565,6 +710,7 @@ class SearchState(private val scope: CoroutineScope) {
         query = ""
         submitted = ""
         results = emptyList()
+        clearPaging()
         suggestions = emptyList()
         suggestionsLoading = false
         loading = false
@@ -580,6 +726,7 @@ class SearchState(private val scope: CoroutineScope) {
             if (submitted.isNotEmpty() || results.isNotEmpty() || error != null || loading) {
                 submitted = ""
                 results = emptyList()
+                clearPaging()
                 error = null
                 loading = false
                 job?.cancel()
@@ -607,13 +754,48 @@ class SearchState(private val scope: CoroutineScope) {
         error = null
         if (results.isNotEmpty()) generation++
         results = emptyList()
+        clearPaging()
         job?.cancel()
         job = scope.launch {
             runCatching { YouTube.search(q) }
-                .onSuccess { results = it }
+                .onSuccess { page ->
+                    lastPage = page
+                    results = page.videos.distinctBy { it.id }
+                    didYouMean = page.didYouMean
+                    hasMore = page.hasMore
+                    // A first page of only channels/playlists: go straight on to the next one.
+                    if (results.size < 6 && page.hasMore) loadMore()
+                }
                 .onFailure { error = YouTube.friendlyError(it) }
             loading = false
         }
+    }
+
+    /** Appends the next page of results; called as the list nears its end. */
+    fun loadMore() {
+        val page = lastPage ?: return
+        if (loadingMore || !page.hasMore) return
+        val forQuery = submitted
+        loadingMore = true
+        scope.launch {
+            val more = runCatching { YouTube.searchMore(page) }.getOrNull()
+            if (forQuery == submitted && lastPage === page) {
+                lastPage = more
+                hasMore = more?.hasMore == true
+                if (more != null) {
+                    val seen = results.mapTo(HashSet()) { it.id }
+                    results = results + more.videos.filter { seen.add(it.id) }
+                }
+            }
+            loadingMore = false
+        }
+    }
+
+    private fun clearPaging() {
+        lastPage = null
+        didYouMean = null
+        hasMore = false
+        loadingMore = false
     }
 }
 
@@ -745,10 +927,13 @@ fun SearchScreen(
                 title = "Search without the ads",
                 body = "Results play straight away, with no ads and no sign-in.",
             )
-            state.results.isEmpty() && !state.loading -> EmptyState(
+            state.results.isEmpty() && !state.loading && !state.loadingMore -> EmptyState(
                 icon = SfIcons.History,
                 title = "Nothing found",
                 body = "No videos matched “${state.submitted}”.",
+                action = state.didYouMean?.let { fix -> @Composable
+                    { PillButton("Search “$fix”", { state.updateQuery(fix); submit() }) }
+                },
             )
             else -> {
                 val list = rememberScrollToTop(scrollToTop)
@@ -757,11 +942,30 @@ fun SearchScreen(
                 // scrollToItem(0) pins this item to the top of the viewport, so the
                 // clearance has to be an item. Content padding would scroll away and
                 // the first thumbnail would sit under the back button.
+                // Near the end of what's loaded: fetch the next page.
+                val nearEnd by remember(list) {
+                    derivedStateOf {
+                        val info = list.layoutInfo
+                        val last = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+                        info.totalItemsCount > 0 && last >= info.totalItemsCount - 4
+                    }
+                }
+                LaunchedEffect(nearEnd, state.results.size, state.hasMore) {
+                    if (nearEnd && state.hasMore && state.results.isNotEmpty()) state.loadMore()
+                }
                 LazyColumn(state = list, contentPadding = contentPadding) {
                     item(key = "top-gap") { Spacer(Modifier.height(bodyTop)) }
+                    state.didYouMean?.let { fix ->
+                        item(key = "did-you-mean") {
+                            DidYouMeanRow(fix) { state.updateQuery(fix); submit() }
+                        }
+                    }
                     if (state.results.isEmpty()) items(4) { FeedSkeletons(1) }
-                    else items(state.results, key = { it.id }) { video ->
-                        VideoCard(video, onClick = { onOpen(video) })
+                    else {
+                        items(state.results, key = { it.id }) { video ->
+                            VideoCard(video, onClick = { onOpen(video) })
+                        }
+                        if (state.hasMore || state.loadingMore) item(key = "more") { FeedSkeletons(1) }
                     }
                 }
             }
@@ -769,6 +973,29 @@ fun SearchScreen(
         }
         }
         }
+    }
+}
+
+/** YouTube's spelling fix for the query: "Did you mean: …", tap to search it. */
+@Composable
+private fun DidYouMeanRow(fix: String, onClick: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .pressable(onClick = onClick)
+            .padding(horizontal = PageGutter, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Did you mean ", fontSize = 15.sp, color = c.onSurfaceVariant)
+        Text(
+            fix,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            color = c.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

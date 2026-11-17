@@ -120,14 +120,14 @@ class MainActivity : ComponentActivity() {
         ) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        NewVideos.takeVideo(intent)?.let { NewVideos.opening = it }
+        (NewVideos.takeVideo(intent) ?: YouTubeLinks.videoFrom(intent))?.let { NewVideos.opening = it }
         setContent { YunoTheme { YunoApp() } }
     }
 
-    /** A new-video notification tapped while this window is open (singleTop). */
+    /** A new-video notification tapped, or a YouTube link opened or shared, while this window is open (singleTop). */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        NewVideos.takeVideo(intent)?.let { NewVideos.opening = it }
+        (NewVideos.takeVideo(intent) ?: YouTubeLinks.videoFrom(intent))?.let { NewVideos.opening = it }
     }
 
     override fun onStart() {
@@ -551,6 +551,7 @@ fun YunoApp() {
                         playlistFeeds.getOrPut(pageRoute.ref.id) { lib.playlistFeed(pageRoute.ref.id) },
                         contentPadding,
                         onOpen = player::open,
+                        onPlayAll = player::playAll,
                         channelAvatarSeed = lib.channels.associate { it.id to it.avatar },
                     )
                     is AppRoute.Channel -> ChannelScreen(

@@ -17,7 +17,16 @@ class YunoApplication : Application(), ImageLoaderFactory {
         CrashLog.install(this)
         // First: everything below may already word something (str()).
         AppLanguage.init(this)
-        NewPipe.init(NewPipeDownloader.instance)
+        // Search and suggestions ranked for the phone's country (gl), not NewPipe's default (GB);
+        // the language stays English, which the parsers rely on.
+        NewPipe.init(
+            NewPipeDownloader.instance,
+            org.schabi.newpipe.extractor.localization.Localization.DEFAULT,
+            java.util.Locale.getDefault().country
+                .takeIf { it.length == 2 }
+                ?.let { org.schabi.newpipe.extractor.localization.ContentCountry(it) }
+                ?: org.schabi.newpipe.extractor.localization.ContentCountry.DEFAULT,
+        )
         // The iOS client only adds HLS livestream formats; Yuno plays VOD, so skip that request.
         org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeStreamExtractor.setFetchIosClient(false)
         ThemeSettings.init(this)
@@ -26,6 +35,10 @@ class YunoApplication : Application(), ImageLoaderFactory {
         QualityPreference.init(this)
         PlaybackSpeed.init(this)
         AudioOnly.init(this)
+        Autoplay.init(this)
+        Incognito.init(this)
+        Downloads.init(this)
+        ReturnDislike.init(this)
         PlayerControls.init(this)
         FullscreenZoom.init(this)
         SeekStep.init(this)
