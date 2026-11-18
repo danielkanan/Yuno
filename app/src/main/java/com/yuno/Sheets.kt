@@ -49,6 +49,8 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.DoNotDisturbOn
 import androidx.compose.material.icons.rounded.RemoveCircleOutline
 import androidx.compose.material.icons.rounded.WatchLater
@@ -132,6 +134,10 @@ fun VideoOptionsSheet(video: VideoItem, player: PlayerState, onDismiss: () -> Un
         OptionRow(Icons.Rounded.Share, stringResource(R.string.ui_share)) {
             shareLink(context, "https://youtu.be/${video.id}", video.title)
             onDismiss()
+        }
+        if (Downloads.get(video.id) == null) {
+            OptionRow(Icons.Rounded.Download, "Download (720p)") { player.download(video, DownloadQuality.P720); onDismiss() }
+            OptionRow(Icons.Rounded.MusicNote, "Download audio only") { player.download(video, DownloadQuality.AudioOnly); onDismiss() }
         }
         video.feedback?.notInterested?.let {
             OptionRow(Icons.Rounded.DoNotDisturbOn, stringResource(R.string.ui_not_interested)) { player.notInterested(video); onDismiss() }

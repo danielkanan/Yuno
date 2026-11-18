@@ -191,6 +191,33 @@ class FeedState(
     }
 
     /**
+     * Reads on page after page until the list ends or holds [cap] videos: a playlist's sort,
+     * filter, Play all and Shuffle work on the whole list, not just what was scrolled into view.
+     */
+    suspend fun loadAll(cap: Int = 1000) {
+        if (!loaded) refresh()
+        job?.join()
+        while (true) {
+            val token = next ?: break
+            if (videos.size >= cap) break
+            loading = true
+            val page = try {
+                loader(token)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                loading = false
+                throw e
+            } catch (e: Exception) {
+                error = friendly(e)
+                break
+            }
+            val seen = videos.mapTo(HashSet()) { it.id }
+            videos = videos + page.videos.filter { seen.add(it.id) }
+            next = page.next
+        }
+        loading = false
+    }
+
+    /**
      * Unseen videos only: reads up to [FRESH_PAGES] pages into the feed until there are
      * [FRESH_TARGET]. If YouTube has nothing new at all, falls back to the plain first page.
      */

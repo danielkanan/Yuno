@@ -5,6 +5,9 @@
     <string name="video_bot_check_waiting">YouTube is checking this connection. Trying again…</string>
 
     <!-- Accessibility labels of the round buttons on the video. -->
+    <string name="video_loop">Loop</string>
+    <string name="video_loop_on">Loop on</string>
+    <string name="video_loop_off">Loop off</string>
     <string name="video_playback_speed">Playback speed</string>
     <string name="video_captions">Captions</string>
     <string name="video_quality">Quality</string>
@@ -40,6 +43,12 @@
     <string name="video_drop_captions">CAPTIONS</string>
     <string name="video_drop_quality">QUALITY</string>
     <string name="video_drop_speed">SPEED</string>
+    <!-- Header over the audio languages of a dubbed video, in the fullscreen quality card. -->
+    <string name="video_drop_audio">AUDIO</string>
+    <!-- Title over the audio languages of a dubbed video, in the quality sheet. -->
+    <string name="video_audio_language">Audio language</string>
+    <!-- Tag beside the language a video was made in. -->
+    <string name="video_audio_original">Original</string>
 
     <!-- Captions card: row that turns captions off. -->
     <string name="video_captions_off">Off</string>

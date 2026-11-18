@@ -86,7 +86,7 @@ fun GlassNavBar(
                     // The pull lifts the pill. It has to sit outside the accessory's clip,
                     // or the top of the bar is cut off as the finger rises — gesture on the
                     // outside of the glass.
-                    modifier = Modifier.miniPlayerPullGestures(pull, onDismiss = player::close).then(accessoryModifier),
+                    modifier = Modifier.miniPlayerPullGestures(pull, onDismiss = player::close, onTogglePlay = player::togglePlay, playing = player.isPlaying).then(accessoryModifier),
                     shape = pillShape,
                     showVideo = live,
                     compact = true,
@@ -106,7 +106,7 @@ fun GlassNavBar(
                 MiniPlayer(
                     state = player,
                     onExpand = onExpandPlayer,
-                    modifier = Modifier.miniPlayerPullGestures(pull, onDismiss = player::close).fillMaxWidth().then(accessoryModifier),
+                    modifier = Modifier.miniPlayerPullGestures(pull, onDismiss = player::close, onTogglePlay = player::togglePlay, playing = player.isPlaying).fillMaxWidth().then(accessoryModifier),
                     shape = pillShape,
                     showVideo = live,
                     dock = if (visible) dock else null,

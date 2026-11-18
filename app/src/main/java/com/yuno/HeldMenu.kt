@@ -292,6 +292,9 @@ fun VideoHeldMenu(
                     shareLink(context, "https://youtu.be/${menuVideo.id}", menuVideo.title)
                     onDismiss()
                 }
+                if (Downloads.get(menuVideo.id) == null) {
+                    MenuRow(SfIcons.Download, "Download (720p)", open) { player.download(menuVideo, DownloadQuality.P720); onDismiss() }
+                }
                 if (menuVideo.feedback?.notInterested != null || menuVideo.feedback?.dontRecommend != null) {
                     MenuSeparator(hairline)
                 }

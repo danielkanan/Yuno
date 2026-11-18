@@ -25,6 +25,14 @@
     <string name="settings_speed_remember_off">Each video starts at 1×</string>
     <string name="settings_speed_kept_summary">speed kept at %1$s×</string>
     <string name="settings_speed_per_video">speed set per video</string>
+    <string name="settings_autoplay_title">Autoplay</string>
+    <string name="settings_autoplay_line">When the queue runs out, play a related video next</string>
+    <string name="settings_mobile_quality_title">Quality on mobile data</string>
+    <string name="settings_mobile_quality_line">Used when you\'re not on Wi-Fi, to save data</string>
+    <!-- Short segment label: mobile data uses the same quality as Wi-Fi. -->
+    <string name="settings_mobile_quality_same">Same</string>
+    <string name="settings_dislikes_title">Show dislikes</string>
+    <string name="settings_dislikes_line">Estimated counts from Return YouTube Dislike. Sends the video\'s ID to that service.</string>
     <!-- SponsorBlock's summary: %1$s segment types skipped, %2$s asked about. -->
     <string name="settings_sb_summary">Skips %1$s, asks about %2$s</string>
     <string name="settings_mode">Mode</string>
@@ -73,4 +81,6 @@
     <string name="settings_chapters_open_line">Picking a chapter leaves the list open, so you can go from one to the next</string>
     <string name="settings_auto_pip_title">Picture-in-picture when you leave</string>
     <string name="settings_auto_pip_line">Going home while a video plays keeps it playing in a small window</string>
+    <string name="settings_incognito_title">Incognito</string>
+    <string name="settings_incognito_line">Nothing you watch or search is saved to your YouTube or Yuno history</string>
 </resources>

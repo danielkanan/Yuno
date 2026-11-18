@@ -23,6 +23,7 @@ import androidx.compose.material.icons.rounded.FullscreenExit
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PictureInPictureAlt
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.withFrameNanos
@@ -38,6 +39,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroidSize
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -564,6 +566,9 @@ fun VideoContent(
                         )
                     } else {
                         Spacer(Modifier.weight(1f))
+                        OverlayTile(stringResource(R.string.video_loop), enabled, tool, filled = state.looping, onClick = { touched(); state.toggleLoop() }) { ink ->
+                            Icon(Icons.Rounded.RepeatOne, null, tint = ink, modifier = Modifier.size(tool * 0.5f))
+                        }
                     }
                     val stickySpeed = PlaybackSpeed.remember && !PlaybackSpeed.isNormal(state.speed)
                     OverlayPill(
@@ -908,6 +913,20 @@ fun QualitySheet(state: PlayerState, onDismiss: () -> Unit) {
         }
         details.qualities.forEach { h ->
             SheetRow("${h}p", qualityTag(h), chosen == h) { state.setQuality(h); onDismiss() }
+        }
+        if (details.audioTracks.isNotEmpty()) {
+            // A dubbed video: the languages its sound comes in.
+            Text(
+                stringResource(R.string.video_audio_language),
+                fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 21.sp,
+                modifier = Modifier.padding(start = PageGutter, end = PageGutter, top = 18.dp, bottom = 8.dp),
+            )
+            val playing = StreamSelection.playingLanguage(details.audioTracks)
+            details.audioTracks.forEach { track ->
+                SheetRow(track.name, if (track.original) stringResource(R.string.video_audio_original) else null, playing == track.language) {
+                    state.setAudioLanguage(track); onDismiss()
+                }
+            }
         }
         Spacer(Modifier.height(28.dp))
         }
@@ -1283,6 +1302,28 @@ private fun BoxScope.QualityDrop(state: PlayerState, open: Boolean, anchor: Rect
                 scope.launch { delay(420); currentClose() }
             }
         }
+        if (details.audioTracks.isNotEmpty()) {
+            // A dubbed video: the languages its sound comes in, under the heights.
+            Text(
+                stringResource(R.string.video_drop_audio),
+                color = Color.White.copy(alpha = 0.55f), fontSize = 10.5.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.6.sp,
+                maxLines = 1,
+                modifier = Modifier.height(DropHeaderHeight).padding(start = 12.dp, top = 6.dp),
+            )
+            var language by remember { mutableStateOf(StreamSelection.playingLanguage(details.audioTracks)) }
+            details.audioTracks.forEach { track ->
+                DropRow(
+                    title = track.name,
+                    tag = if (track.original) stringResource(R.string.video_audio_original) else null,
+                    selected = language == track.language,
+                ) {
+                    if (!open) return@DropRow
+                    language = track.language
+                    state.setAudioLanguage(track)
+                    scope.launch { delay(420); currentClose() }
+                }
+            }
+        }
     }
 }
 
@@ -1303,7 +1344,13 @@ private fun BoxScope.SpeedDrop(state: PlayerState, open: Boolean, anchor: Rect, 
         (SpeedPresets + listOfNotNull(custom)).sorted()
     }
     fun same(a: Float, b: Float) = abs(a - b) < PlaybackSpeed.STEP / 2
-    OverlayDrop(open, shown, anchor, boxHeight, stringResource(R.string.video_drop_speed), openAt = { rows.indexOfFirst { same(it, picked) } }, onClose = onClose) { scope ->
+    OverlayDrop(open, shown, anchor, boxHeight, stringResource(R.string.video_drop_speed), openAt = { 1 + rows.indexOfFirst { same(it, picked) } }, onClose = onClose) { scope ->
+        // Any speed in between the presets: slide along the line, in 0.05× steps.
+        DropSpeedSlider(
+            speed = picked,
+            onChange = { if (open) { picked = it; state.previewSpeed(it) } },
+            onDone = { if (open) state.commitSpeed(it) },
+        )
         rows.forEach { s ->
             DropRow(
                 title = PlaybackSpeed.label(s) + "×",
@@ -1322,6 +1369,60 @@ private fun BoxScope.SpeedDrop(state: PlayerState, open: Boolean, anchor: Rect, 
         }
         Spacer(Modifier.height(5.dp))
         DropRow(title = stringResource(R.string.video_speed_every_video), tag = null, selected = PlaybackSpeed.remember) { if (open) state.toggleRememberSpeed() }
+    }
+}
+
+/**
+ * The speed card's slider: the speed on the left, a line from 0.5× to 3× beside it. Touching or sliding along the
+ * line sets the speed live, a 0.05× step at a time with a tick, like the portrait ruler.
+ */
+@Composable
+private fun DropSpeedSlider(speed: Float, onChange: (Float) -> Unit, onDone: (Float) -> Unit) {
+    val view = LocalView.current
+    val change by rememberUpdatedState(onChange)
+    val done by rememberUpdatedState(onDone)
+    Row(
+        Modifier.padding(bottom = DropRowGap).fillMaxWidth().height(DropRowHeight).padding(start = 12.dp, end = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            PlaybackSpeed.label(speed) + "×",
+            color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1,
+            modifier = Modifier.width(50.dp),
+        )
+        Canvas(
+            Modifier.weight(1f).fillMaxHeight().pointerInput(Unit) {
+                val pad = 8.dp.toPx()
+                fun at(x: Float): Float {
+                    val t = ((x - pad) / (size.width - pad * 2).coerceAtLeast(1f)).coerceIn(0f, 1f)
+                    return PlaybackSpeed.snap(PlaybackSpeed.MIN + t * (PlaybackSpeed.MAX - PlaybackSpeed.MIN))
+                }
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    var last = at(down.position.x)
+                    change(last)
+                    horizontalDrag(down.id) { moved ->
+                        val next = at(moved.position.x)
+                        if (next != last) {
+                            last = next
+                            view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                            change(next)
+                        }
+                        moved.consume()
+                    }
+                    done(last)
+                }
+            },
+        ) {
+            val pad = 8.dp.toPx()
+            val y = size.height / 2f
+            val t = ((speed - PlaybackSpeed.MIN) / (PlaybackSpeed.MAX - PlaybackSpeed.MIN)).coerceIn(0f, 1f)
+            val x = pad + (size.width - pad * 2) * t
+            drawLine(Color.White.copy(alpha = 0.28f), Offset(pad, y), Offset(size.width - pad, y), 4.dp.toPx(), androidx.compose.ui.graphics.StrokeCap.Round)
+            drawLine(Color.White, Offset(pad, y), Offset(x, y), 4.dp.toPx(), androidx.compose.ui.graphics.StrokeCap.Round)
+            drawCircle(Color.White, 7.dp.toPx(), Offset(x, y))
+        }
     }
 }
 

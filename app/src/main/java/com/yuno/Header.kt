@@ -810,8 +810,12 @@ fun Modifier.floatingChrome(shape: CornerBasedShape): Modifier {
  * Without it the scrim sits over the title and reads grey.
  */
 @Composable
-fun PageTopFade(listState: LazyListState? = null, modifier: Modifier = Modifier) {
-    val page = MaterialTheme.colorScheme.surface
+fun PageTopFade(listState: LazyListState? = null, modifier: Modifier = Modifier) =
+    PageTopFade(cover = { if (listState == null) 1f else headingCover(listState) }, modifier = modifier)
+
+/** The same fade for a page that is not a lazy list: [cover] is 0 while its title shows, 1 once it has scrolled away. */
+@Composable
+fun PageTopFade(cover: () -> Float, modifier: Modifier = Modifier, page: Color = MaterialTheme.colorScheme.surface) {
     val brush = remember(page) {
         Brush.verticalGradient(
             colorStops = Array(16) { i ->
@@ -824,7 +828,7 @@ fun PageTopFade(listState: LazyListState? = null, modifier: Modifier = Modifier)
         modifier
             .fillMaxWidth()
             .height(180.dp)
-            .graphicsLayer { alpha = if (listState == null) 1f else headingCover(listState) }
+            .graphicsLayer { alpha = cover() }
             .drawBehind { drawRect(brush) },
     )
 }

@@ -15,6 +15,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.schabi.newpipe.extractor.Image
 import org.schabi.newpipe.extractor.MediaFormat
+import org.schabi.newpipe.extractor.Page
 import org.schabi.newpipe.extractor.channel.ChannelInfo
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabInfo
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabs
@@ -26,7 +27,7 @@ import org.schabi.newpipe.extractor.exceptions.GeographicRestrictionException
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 import org.schabi.newpipe.extractor.exceptions.SignInConfirmNotBotException
 import org.schabi.newpipe.extractor.search.SearchInfo
-import org.schabi.newpipe.extractor.services.youtube.linkHandler.YoutubeSearchQueryHandlerFactory
+import org.schabi.newpipe.extractor.linkhandler.SearchQueryHandler
 import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.AudioTrackType
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
@@ -94,7 +95,13 @@ data class VideoDetails(
     val captions: List<CaptionTrack> = emptyList(),
     /** A stream that is on right now. A finished livestream is an ordinary video. */
     val live: Boolean = false,
+    /** The languages this video's sound comes in, the original first; empty when there is only one. */
+    val audioTracks: List<AudioLanguageTrack> = emptyList(),
 )
+
+/** One language of a video's sound: [language] is its code ("en", "hi"), [name] what the picker shows. */
+@Immutable
+data class AudioLanguageTrack(val language: String, val name: String, val original: Boolean)
 
 @Immutable
 data class Chapter(val startMs: Long, val title: String)
@@ -178,11 +185,43 @@ object YouTube {
 
     fun watchUrl(id: String) = "https://www.youtube.com/watch?v=$id"
 
-    suspend fun search(query: String): List<VideoItem> = withContext(Dispatchers.IO) {
-        val handler = service.searchQHFactory.fromQuery(query, listOf(YoutubeSearchQueryHandlerFactory.VIDEOS), "")
-        SearchInfo.getInfo(service, handler).relatedItems
-            .filterIsInstance<StreamInfoItem>()
-            .mapNotNull { it.toVideoItem() }
+    /** One page of search results; [more] fetches the next one (null at the end). */
+    class SearchPage(
+        val videos: List<VideoItem>,
+        /** YouTube's "Did you mean" spelling, when it has one. */
+        val didYouMean: String?,
+        internal val handler: SearchQueryHandler,
+        internal val next: Page?,
+    ) {
+        val hasMore get() = next != null
+    }
+
+    /**
+     * Searches like youtube.com does: with no "videos only" filter. That filter turns off YouTube's
+     * spelling fixes, so a misspelt query ("orada ovta tamil song") found nothing at all; unfiltered,
+     * YouTube still finds the song. Channels, playlists and Shorts shelves are dropped here.
+     */
+    suspend fun search(query: String): SearchPage = withContext(Dispatchers.IO) {
+        val handler = service.searchQHFactory.fromQuery(query, emptyList(), "")
+        val info = SearchInfo.getInfo(service, handler)
+        SearchPage(
+            videos = info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toVideoItem() },
+            didYouMean = info.searchSuggestion?.takeIf { it.isNotBlank() && !it.equals(query.trim(), ignoreCase = true) },
+            handler = handler,
+            next = info.nextPage?.takeIf { Page.isValid(it) },
+        )
+    }
+
+    /** The page after [page], or null when there is none. */
+    suspend fun searchMore(page: SearchPage): SearchPage? = withContext(Dispatchers.IO) {
+        val next = page.next ?: return@withContext null
+        val more = SearchInfo.getMoreItems(service, page.handler, next)
+        SearchPage(
+            videos = more.items.filterIsInstance<StreamInfoItem>().mapNotNull { it.toVideoItem() },
+            didYouMean = page.didYouMean,
+            handler = page.handler,
+            next = more.nextPage?.takeIf { Page.isValid(it) },
+        )
     }
 
     suspend fun searchSuggestions(query: String): List<String> = withContext(Dispatchers.IO) {
@@ -230,6 +269,7 @@ object YouTube {
             live = live != null,
             quality = picked.playedHeight?.let { "${it}p" },
             qualities = StreamSelection.heights(info),
+            audioTracks = StreamSelection.audioTracks(info),
             aspect = (if (picked.usesSeparate) picked.video else picked.muxed)
                 ?.takeIf { it.width > 0 && it.height > 0 }?.let { it.width.toFloat() / it.height },
             chapters = info.streamSegments.orEmpty()
@@ -263,6 +303,12 @@ object YouTube {
             videosTab = videosTab,
         )
     }
+
+    /** [info]'s related videos that can play here: regular videos only, no Shorts or live. */
+    fun related(info: StreamInfo): List<VideoItem> =
+        info.relatedItems.filterIsInstance<StreamInfoItem>()
+            .filterNot { it.isShortFormContent }
+            .mapNotNull { it.toVideoItem() }
 
     private fun StreamInfoItem.toVideoItem(): VideoItem? {
         // Live and upcoming entries need HLS handling that isn't built yet.
@@ -480,22 +526,80 @@ object BotCheck {
  */
 object QualityPreference {
     private const val KEY = "quality_height"
+    private const val KEY_MOBILE = "quality_height_mobile"
+    /** [mobile]'s value for "follow the Wi-Fi choice". */
+    const val SAME_AS_WIFI = -1
     private var prefs: SharedPreferences? = null
+    private var connectivity: android.net.ConnectivityManager? = null
 
     @Volatile
-    var height: Int? = null
+    private var wifiHeight: Int? = null
+
+    /**
+     * Quality on mobile data (Settings › Playback): [SAME_AS_WIFI], 0 for Auto, or a height.
+     * Saves a data plan, as ReVanced's separate Wi-Fi / mobile default quality does.
+     */
+    var mobile by androidx.compose.runtime.mutableIntStateOf(SAME_AS_WIFI)
+        private set
+
+    /** The chosen height for the network the phone is on now; null is Auto. */
+    val height: Int?
+        get() = if (onMobileData() && mobile != SAME_AS_WIFI) mobile.takeIf { it > 0 } else wifiHeight
+
+    fun init(context: Context) {
+        prefs = context.getSharedPreferences("playback", Context.MODE_PRIVATE)
+        connectivity = context.getSystemService(android.net.ConnectivityManager::class.java)
+        wifiHeight = prefs?.getInt(KEY, 0)?.takeIf { it > 0 }?.takeIf { it in QUALITY_LADDER }
+        mobile = prefs?.getInt(KEY_MOBILE, SAME_AS_WIFI)
+            ?.takeIf { it == SAME_AS_WIFI || it == 0 || it in QUALITY_LADDER } ?: SAME_AS_WIFI
+    }
+
+    /** The quality sheet's pick: kept for the network it was made on. */
+    fun set(value: Int?) {
+        if (onMobileData() && mobile != SAME_AS_WIFI) {
+            chooseMobile(value ?: 0)
+            return
+        }
+        wifiHeight = value
+        prefs?.edit()?.putInt(KEY, value ?: 0)?.apply()
+    }
+
+    fun chooseMobile(value: Int) {
+        mobile = value
+        prefs?.edit()?.putInt(KEY_MOBILE, value)?.apply()
+    }
+
+    /** On a metered network (mobile data, a hotspot); Wi-Fi and Ethernet are not. */
+    private fun onMobileData(): Boolean = connectivity?.isActiveNetworkMetered == true
+}
+
+/**
+ * The language to hear a video in when it has more than one (a dubbed video), or null for its
+ * original. Kept across launches and videos: pick Hindi once and every video that has Hindi plays
+ * in it; the rest play their original. Read by the playback service, like [QualityPreference].
+ */
+object AudioLanguage {
+    private const val KEY = "audio_language"
+    private var prefs: SharedPreferences? = null
+
+    var preferred by androidx.compose.runtime.mutableStateOf<String?>(null)
         private set
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences("playback", Context.MODE_PRIVATE)
-        height = prefs?.getInt(KEY, 0)?.takeIf { it > 0 }?.takeIf { it in QUALITY_LADDER }
+        preferred = prefs?.getString(KEY, null)?.takeIf { it.isNotBlank() }
     }
 
-    fun set(value: Int?) {
-        height = value
-        prefs?.edit()?.putInt(KEY, value ?: 0)?.apply()
+    fun choose(language: String?) {
+        preferred = language
+        prefs?.edit()?.apply { if (language == null) remove(KEY) else putString(KEY, language) }?.apply()
     }
 }
+
+/** "en" for an English track, from its locale or its id ("en-US.4"); null when YouTube names no language. */
+internal fun AudioStream.languageKey(): String? =
+    audioLocale?.language?.takeIf { it.isNotBlank() }
+        ?: audioTrackId?.substringBefore('.')?.substringBefore('-')?.takeIf { it.isNotBlank() }
 
 /** Standard rungs shown in the quality sheet (matches YouTube's labels). */
 val QUALITY_LADDER = intArrayOf(144, 240, 360, 480, 720, 1080, 1440, 2160, 4320)
@@ -549,10 +653,19 @@ object StreamSelection {
         // The original language is preferred, but ANY audio track beats none: with no
         // accepted audio the player fell back to the 360p combined stream while the label
         // still said 1080p (the blurry-video bug, 2026-10-04).
+        // A chosen language (AudioLanguage) comes first when this video has it.
+        val language = AudioLanguage.preferred
         val audio = info.audioStreams
             .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
             .sortedWith(
-                compareBy<AudioStream> { if (it.audioTrackType == null || it.audioTrackType == AudioTrackType.ORIGINAL) 0 else 1 }
+                compareBy<AudioStream> { if (language != null && it.languageKey() == language) 0 else 1 }
+                    .thenBy {
+                        when (it.audioTrackType) {
+                            null, AudioTrackType.ORIGINAL -> 0
+                            AudioTrackType.DESCRIPTIVE -> 2
+                            else -> 1
+                        }
+                    }
                     .thenBy { if (it.format == MediaFormat.M4A) 0 else 1 }
                     .thenByDescending { it.averageBitrate },
             )
@@ -576,6 +689,30 @@ object StreamSelection {
             .map { (_, sameHeight) -> sameHeight.maxBy { it.fps * 100_000L + it.bitrate } }
             .sortedBy { it.height }
     }
+
+    /** The languages on offer, the original first; empty unless there are at least two. */
+    fun audioTracks(info: StreamInfo): List<AudioLanguageTrack> {
+        val tracks = info.audioStreams
+            .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.audioTrackType != AudioTrackType.DESCRIPTIVE }
+            .mapNotNull { stream -> stream.languageKey()?.let { it to stream } }
+            .groupBy({ it.first }, { it.second })
+            .map { (language, streams) ->
+                val locale = streams.firstNotNullOfOrNull { it.audioLocale }
+                AudioLanguageTrack(
+                    language = language,
+                    name = locale?.getDisplayLanguage(java.util.Locale.getDefault())?.takeIf { it.isNotBlank() }?.replaceFirstChar { it.titlecase() }
+                        ?: streams.firstNotNullOfOrNull { it.audioTrackName?.takeIf { n -> n.isNotBlank() } }
+                        ?: language,
+                    original = streams.any { it.audioTrackType == AudioTrackType.ORIGINAL },
+                )
+            }
+            .sortedWith(compareBy<AudioLanguageTrack> { !it.original }.thenBy { it.name })
+        return if (tracks.size > 1) tracks else emptyList()
+    }
+
+    /** The language playing: the chosen one when this video has it, else the original. */
+    fun playingLanguage(tracks: List<AudioLanguageTrack>): String? =
+        (tracks.firstOrNull { it.language == AudioLanguage.preferred } ?: tracks.firstOrNull { it.original } ?: tracks.firstOrNull())?.language
 
     fun heights(info: StreamInfo): List<Int> = info.videoOnlyStreams
         .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.height > 0 }

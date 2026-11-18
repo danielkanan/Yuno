@@ -116,6 +116,7 @@ class PlaybackService : MediaSessionService() {
         player.setVideoFrameMetadataListener { _, releaseTimeNs, _, _ -> AvSync.onFrameReleased(releaseTimeNs) }
         player.addListener(SponsorSkipper(player))
         player.addListener(SpeedKeeper(player))
+        player.addListener(Autoplayer(player, resolver))
         // Before the session's own listener: the UI must see the recovery when the error reaches it.
         player.addListener(StreamRecoverer(player, sources, resolver))
         resumeSaver = ResumeSaver(player).also(player::addListener)
@@ -171,6 +172,20 @@ class PlaybackService : MediaSessionService() {
             mediaItems: MutableList<MediaItem>,
         ): ListenableFuture<MutableList<MediaItem>> = resolver.submit<MutableList<MediaItem>> {
             mediaItems.map { item ->
+                // Downloaded: everything needed is on the phone (no network, no extraction).
+                Downloads.get(item.mediaId)?.takeIf { it.done }?.let { d ->
+                    return@map item.buildUpon()
+                        .setUri(YouTube.watchUrl(item.mediaId))
+                        .setMediaMetadata(
+                            item.mediaMetadata.buildUpon()
+                                .setTitle(item.mediaMetadata.title ?: d.item.title)
+                                .setArtist(item.mediaMetadata.artist ?: d.item.channel)
+                                .setDurationMs(item.mediaMetadata.durationMs ?: d.item.durationSec.takeIf { it > 0 }?.times(1000))
+                                .setMediaType(MediaMetadata.MEDIA_TYPE_VIDEO)
+                                .build(),
+                        )
+                        .build()
+                }
                 // An opened video is already loaded (the player waited for it); this resolves
                 // restored and queued items, which nobody is waiting for yet.
                 val info = BotCheck.withoutWaiting(item.mediaId) { StreamCache.getOrLoad(item.mediaId) }
@@ -309,7 +324,8 @@ private class WatchTimeReporter(private val player: ExoPlayer) : Player.Listener
         if (id == videoId) return
         finish()
         videoId = id
-        if (id == null || !Account.signedIn) return
+        // Incognito: no watch session, so every ping below finds none and nothing is sent.
+        if (id == null || !Account.signedIn || Incognito.on) return
         startedAt = android.os.SystemClock.elapsedRealtime()
         if (player.isPlaying) startStretch()
         io.execute {
@@ -459,6 +475,95 @@ private class MemoryBudgetLoadControl(
  * resets it: fresh links (StreamRecoverer) or a quality switch reload the same video and keep
  * the speed it was playing at.
  */
+/**
+ * Autoplay ([Autoplay]): the last video in the playlist ended, so the first related video that hasn't
+ * played lately is added and started. The UI follows it like any queue advance
+ * (PlayerState.onPlayerMovedTo drops the finished item). Runs in the service, so the screen can be off.
+ */
+private class Autoplayer(
+    private val player: ExoPlayer,
+    private val resolver: java.util.concurrent.Executor,
+) : Player.Listener {
+    private val main = Handler(Looper.getMainLooper())
+    /** Recently played ids, oldest first, so autoplay doesn't bounce between two videos. */
+    private val played = ArrayDeque<String>()
+    private var pendingFor: String? = null
+
+    override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+        val id = mediaItem?.mediaId?.ifBlank { null } ?: return
+        played.remove(id)
+        played.addLast(id)
+        while (played.size > RECENT) played.removeFirst()
+    }
+
+    override fun onPlaybackStateChanged(playbackState: Int) {
+        if (playbackState != Player.STATE_ENDED || !Autoplay.on) return
+        if (player.currentMediaItemIndex + 1 < player.mediaItemCount) return
+        val endedId = player.currentMediaItem?.mediaId?.ifBlank { null } ?: return
+        if (pendingFor == endedId) return
+        pendingFor = endedId
+        val skip = played.toSet() + (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }
+        resolver.execute {
+            val next = runCatching {
+                val info = StreamCache.get(endedId) ?: BotCheck.withoutWaiting(endedId) { StreamCache.getOrLoad(endedId) }
+                val pick = pickNext(endedId, info, skip) ?: return@runCatching null
+                // Loaded here, so the media source has its streams the moment it's added.
+                val nextInfo = BotCheck.withoutWaiting(pick.id) { StreamCache.getOrLoad(pick.id) }
+                pick to nextInfo
+            }.onFailure { Log.w("Yuno", "autoplay after $endedId failed", it) }.getOrNull()
+            main.post {
+                pendingFor = null
+                if (next == null) return@post
+                // Still where we left it: ended on that video, nothing queued since, autoplay still on.
+                if (!Autoplay.on || player.playbackState != Player.STATE_ENDED) return@post
+                if (player.currentMediaItem?.mediaId != endedId || player.currentMediaItemIndex + 1 < player.mediaItemCount) return@post
+                val (item, info) = next
+                Log.i("Yuno", "autoplay: $endedId → ${item.id}")
+                player.addMediaItem(
+                    MediaItem.Builder()
+                        .setMediaId(item.id)
+                        .setUri(YouTube.watchUrl(item.id))
+                        .setMediaMetadata(
+                            MediaMetadata.Builder()
+                                .setTitle(item.title.ifBlank { info.name })
+                                .setArtist(item.channel.ifBlank { info.uploaderName.orEmpty() })
+                                .setArtworkUri(item.thumbnail?.let(Uri::parse))
+                                .setDurationMs(info.duration.takeIf { it > 0 }?.times(1000))
+                                .setMediaType(MediaMetadata.MEDIA_TYPE_VIDEO)
+                                .build(),
+                        )
+                        .build(),
+                )
+                player.seekTo(player.currentMediaItemIndex + 1, 0L)
+                player.prepare()
+                player.play()
+            }
+        }
+    }
+
+    /**
+     * Signed in: what YouTube would play next for the account (a song's Mix, else its autoplay
+     * pick and related list), so autoplay follows your listening and likes. Otherwise, or if that
+     * fails, NewPipe's related list.
+     */
+    private fun pickNext(endedId: String, info: org.schabi.newpipe.extractor.stream.StreamInfo, skip: Set<String>): VideoItem? {
+        if (Account.signedIn) {
+            runCatching {
+                val music = YouTube.isMusic(info)
+                InnerTube.personalUpNext(endedId, music).inOrder.firstOrNull { it.id !in skip }
+                    ?.also { Log.i("Yuno", "autoplay pick from the account's ${if (music) "Mix" else "up next"}: ${it.id}") }
+            }
+                .onFailure { Log.w("Yuno", "personal up next for $endedId failed", it) }
+                .getOrNull()?.let { return it }
+        }
+        return YouTube.related(info).firstOrNull { it.id !in skip }
+    }
+
+    private companion object {
+        const val RECENT = 30
+    }
+}
+
 private class SpeedKeeper(private val player: ExoPlayer) : Player.Listener {
     private var videoId: String? = null
 
@@ -555,6 +660,13 @@ internal class YouTubeMediaSourceFactory(context: Context) : MediaSource.Factory
     override fun getSupportedTypes(): IntArray = fallback.supportedTypes
 
     override fun createMediaSource(mediaItem: MediaItem): MediaSource {
+        // A download plays from its saved files: picture and sound merged, or sound alone.
+        Downloads.files(mediaItem.mediaId)?.let { (video, audio) ->
+            Log.i("Yuno", "media source ${mediaItem.mediaId}: downloaded ${if (video != null) "video + audio" else "audio only"}")
+            fun file(f: java.io.File) = ProgressiveMediaSource.Factory(dataSourceFactory)
+                .createMediaSource(mediaItem.buildUpon().setUri(Uri.fromFile(f)).build())
+            return if (video != null) MergingMediaSource(true, true, file(video), file(audio)) else file(audio)
+        }
         val info = StreamCache.get(mediaItem.mediaId) ?: return fallback.createMediaSource(mediaItem)
         when (val live = info.liveSource()) {
             is LiveSource.Dash -> return liveDash(live.url, mediaItem)

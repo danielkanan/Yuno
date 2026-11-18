@@ -10,6 +10,24 @@ changes something people see or feel (faster, fewer errors); then say that.
 
 ## Unreleased
 
+### New
+- **Pick the audio language.** A dubbed video lists its languages under Quality. Your pick is kept for every video that has that language.
+- **Any speed in fullscreen.** The speed card has a slider above the presets, in 0.05× steps.
+- **More videos beside the player** on a tablet or an open foldable held sideways, as in the YouTube app.
+- **Autoplay.** When your queue runs out, a related video plays next, even with the screen off. Turn it off in Settings › Playback.
+- **Up next that knows you.** Signed in, songs continue with your own YouTube Mix and other videos with what YouTube would pick for you, in autoplay and under "More videos".
+- **Swipe the mini-player like an email.** Swipe right and red shows behind it with a close button; swipe left and green shows with pause or play. The colour goes solid when letting go will act.
+- **Downloads:** save a video (or just its sound) to watch with no internet. Tap Download under the video, or long-press any video. They are in Library › Downloads.
+- **Incognito:** a switch in Settings. While it's on, nothing you watch or search goes into your YouTube or Yuno history.
+- **Open YouTube links in Yuno.** Share a YouTube link to Yuno, or pick Yuno under "Open with".
+- **Dislike counts are back**, from Return YouTube Dislike. Turn them off in Settings › Playback.
+- **Loop a video** with the new repeat button on the player.
+- **Quality on mobile data.** Pick a lower quality for when you're off Wi-Fi in Settings › Playback.
+
+### Improved
+- The brightness and volume level shows at the top of the video, in the middle, so your hand never covers it.
+- Settings pages fade out under the status bar as they scroll, like Home and the other tabs.
+
 ## 1.1.1
 
 ![Yuno](https://github.com/danielkanan/Yuno/raw/main/docs/banner.png?v=2)
@@ -42,7 +60,6 @@ changes something people see or feel (faster, fewer errors); then say that.
 
 ### Miscellaneous
 - Audio only is gone.
-
 ## 1.0.0
 
 ![Yuno](https://github.com/danielkanan/Yuno/raw/main/docs/banner.png?v=2)

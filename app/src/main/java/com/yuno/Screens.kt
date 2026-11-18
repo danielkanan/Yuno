@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.contentColorFor
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -52,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -385,6 +387,19 @@ fun LibraryScreen(
             contentPadding = contentPadding.withTop(pageContentTop()),
         ) {
             item(key = "page-title") { LargePageTitle("Library", fontSize = LargePageTitleCompactFontSize) }
+            if (Incognito.on) item(key = "incognito") { IncognitoBanner() }
+            val downloads = Downloads.all
+            if (downloads.isNotEmpty()) {
+                item(key = "downloadsTitle") { SectionTitle("Downloads") }
+                item(key = "downloads") {
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = PageGutter),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        items(downloads, key = { "d-" + it.item.id }) { d -> DownloadCard(d) { onOpen(d.item) } }
+                    }
+                }
+            }
             item(key = "historyTitle") { SectionTitle("History") }
             item(key = "history") {
                 val history = if (signedIn) lib.history.videos else localHistory
@@ -464,6 +479,84 @@ private fun HistoryCard(video: VideoItem, onClick: () -> Unit) {
         FadingTitle(
             text = video.title,
             style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, lineHeight = 16.sp),
+        )
+    }
+}
+
+/** "You're incognito": history is paused, with a way to turn it back on. */
+@Composable
+private fun IncognitoBanner() {
+    val c = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .padding(horizontal = PageGutter, vertical = 6.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(c.surfaceContainerHigh)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(SfIcons.VisibilityOff, null, tint = c.onSurface, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text("You're incognito", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text("What you watch and search isn't saved.", color = c.onSurfaceVariant, fontSize = 13.sp)
+        }
+        TextLink("Turn off") { Incognito.set(false) }
+    }
+}
+
+/** A saved video: plays offline when done, shows progress while saving, retries when stopped. */
+@Composable
+private fun DownloadCard(d: Download, onPlay: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    val video = d.item
+    Column(
+        Modifier.width(168.dp).pressable(pressedScale = 0.97f, lift = true) {
+            when {
+                d.done -> onPlay()
+                d.state == Download.State.Failed -> Downloads.retry(video.id)
+                else -> Unit
+            }
+        },
+    ) {
+        Box {
+            Thumbnail(video.thumbnail, Modifier.fillMaxWidth().aspectRatio(16f / 9f), radius = FeedVideoThumbRadius)
+            if (d.done) DurationPill(video.durationSec, Modifier.align(Alignment.BottomEnd).padding(6.dp), small = true)
+            else Box(
+                Modifier.matchParentSize().clip(RoundedCornerShape(FeedVideoThumbRadius.dp)).background(Color.Black.copy(alpha = 0.55f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    when (d.state) {
+                        Download.State.Failed -> "Tap to retry"
+                        Download.State.Queued -> "Waiting…"
+                        else -> "${(d.progress * 100).toInt()}%"
+                    },
+                    color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                )
+            }
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(26.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.6f))
+                    .pressable { Downloads.delete(video.id) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(SfIcons.Close, "Delete download", tint = Color.White, modifier = Modifier.size(14.dp))
+            }
+        }
+        Spacer(Modifier.height(7.dp))
+        FadingTitle(
+            text = video.title,
+            style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, lineHeight = 16.sp),
+        )
+        Text(
+            if (d.quality == DownloadQuality.AudioOnly) "Audio only" else d.quality.label,
+            color = c.onSurfaceVariant, fontSize = 12.sp, maxLines = 1,
         )
     }
 }
